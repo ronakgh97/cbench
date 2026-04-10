@@ -1,4 +1,4 @@
-use crate::load::{generate_vectors, matrix_matrix_mul};
+use crate::load::{generate_matrix, matrix_matrix_mul};
 use rayon::prelude::*;
 use std::hint::black_box;
 use std::time::Instant;
@@ -25,14 +25,11 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
 
     // Warmup phase
     {
-        let matrix_a = generate_vectors(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-        let matrix_b = generate_vectors(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-
-        let flat_a: Vec<f64> = matrix_a.into_iter().flatten().collect();
-        let flat_b: Vec<f64> = matrix_b.into_iter().flatten().collect();
+        let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
+        let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
 
         for _ in 0..warmup_runs {
-            let _ = matrix_matrix_mul(&flat_a, &flat_b, SAMPLE_SIZE);
+            let _ = matrix_matrix_mul(&matrix_a, &matrix_b, SAMPLE_SIZE);
         }
     }
 
@@ -40,12 +37,19 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     let mut matrix_vec = Vec::with_capacity(runs);
 
     for _ in 0..runs {
-        let matrix_a = generate_vectors(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-        let matrix_b = generate_vectors(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-        let flat_a: Vec<f64> = matrix_a.into_iter().flatten().collect();
-        let flat_b: Vec<f64> = matrix_b.into_iter().flatten().collect();
-
-        matrix_vec.push((flat_a, flat_b));
+        if max_thread == 1 {
+            let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
+            let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
+            matrix_vec.push((matrix_a, matrix_b));
+        } else {
+            let (matrix_a, matrix_b) = thread_pool.install(|| {
+                rayon::join(
+                    || generate_matrix(SAMPLE_SIZE, &thread_pool),
+                    || generate_matrix(SAMPLE_SIZE, &thread_pool),
+                )
+            });
+            matrix_vec.push((matrix_a, matrix_b));
+        }
     }
 
     let mut score = Vec::with_capacity(runs);
@@ -53,11 +57,11 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
-            let _ = black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
+            black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
         } else {
             thread_pool.install(|| {
                 (0..max_thread).into_par_iter().for_each(|_| {
-                    let _ = black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
+                    black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
                 });
             });
         }
@@ -70,7 +74,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         score.push((elapsed, gflops));
 
         println!(
-            "Run {}: Time = {:.3?}, GFLOPS = {:.2}",
+            "Run {}: Time = {:.3?}s, GFLOPS = {:.2}",
             i + 1,
             elapsed,
             gflops
@@ -81,7 +85,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     let avg_gflops = score.iter().map(|s| s.1).sum::<f64>() / (score.len() as f64);
     let total_time = score.iter().map(|s| s.0).sum::<f64>();
     println!("Average GFLOPS score: {:.2}", avg_gflops);
-    println!("Total time: {}min", total_time / 60.0);
+    println!("Total time: {}min", (total_time / 60.0) as f32);
 
     println!("Checkout this page: https://boinc.bakerlab.org/rosetta/cpu_list.php");
 

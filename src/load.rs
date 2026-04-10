@@ -68,6 +68,7 @@ pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
 /// Multiply two matrices (dim x dim), returning the resulting matrix. [BLAS 3]
 /// Both matrices are expected to be in row-major order.
 #[inline]
+#[allow(dead_code)]
 pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<f64> {
     if dim == 0 {
         panic!("Dimension must be greater than zero");
@@ -102,8 +103,27 @@ pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<
     result
 }
 
+/// Generates a flat random square matrix of given dimension with values in range `[-1.0, 1.0]`
+#[inline]
+pub fn generate_matrix(dim: usize, pool: &ThreadPool) -> Vec<f64> {
+    if dim == 0 {
+        panic!("Dimension must be greater than zero");
+    }
+
+    let mut matrix = vec![0.0f64; dim * dim];
+
+    pool.install(|| {
+        matrix.par_iter_mut().for_each(|x| {
+            *x = fastrand::f64() * 2.0 - 1.0;
+        });
+    });
+
+    matrix
+}
+
 /// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`
 #[inline]
+#[allow(dead_code)]
 pub fn generate_vectors(vector_num: usize, dimensions: usize, pool: &ThreadPool) -> Vec<Vec<f64>> {
     let mut result = vec![vec![0.0f64; dimensions]; vector_num];
 
