@@ -1,0 +1,10 @@
+[package]
+name = "cbench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.0", features = ["derive"] }
+wide = "1.2.0"
+fastrand = "2.4.1"
+rayon = "1.11.0"# this deps will be replace with my manual thread pool implementation in the future
