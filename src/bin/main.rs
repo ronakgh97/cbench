@@ -64,4 +64,5 @@ fn print_none() {
     ";
 
     println!("{}", ascii);
+    println!("Github: https://github.com/ronakgh97/cbench");
 }

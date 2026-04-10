@@ -50,22 +50,14 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
 
     let mut score = Vec::with_capacity(runs);
 
-    for i in 0..runs {
+    for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
-            let _ = black_box(matrix_matrix_mul(
-                &matrix_vec[i].0,
-                &matrix_vec[i].1,
-                SAMPLE_SIZE,
-            ));
+            let _ = black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
         } else {
             thread_pool.install(|| {
                 (0..max_thread).into_par_iter().for_each(|_| {
-                    let _ = black_box(matrix_matrix_mul(
-                        &matrix_vec[i].0,
-                        &matrix_vec[i].1,
-                        SAMPLE_SIZE,
-                    ));
+                    let _ = black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
                 });
             });
         }
