@@ -42,6 +42,7 @@ pub fn dot_product(a: &[f64], b: &[f64]) -> f64 {
 /// Multiple matrix with vec, returning the resulting vector. [BLAS 2]
 /// The matrix is expected to be in row-major order and the dimensions must match,
 #[inline]
+#[allow(dead_code)]
 pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
     if dim == 0 {
         panic!("Dimension must be greater than zero");
@@ -129,9 +130,11 @@ fn test_thread_gen() {
     use std::hint::black_box;
     use std::time::Instant;
     let num_vectors = 1024 * 1024;
-    let dimensions = 1024;
+    let dimensions = 128;
 
-    let thread_1 = 24;
+    let thread_1 = std::thread::available_parallelism()
+        .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
+        .get();
     let pool_1 = rayon::ThreadPoolBuilder::new()
         .num_threads(thread_1)
         .build()

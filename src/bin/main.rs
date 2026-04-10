@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let available = std::thread::available_parallelism()
                 .map(|n| n.get())
-                .unwrap_or(1);
+                .unwrap_or(1); // Default to single
 
             let thread_num = max_threads.unwrap_or(available);
 
