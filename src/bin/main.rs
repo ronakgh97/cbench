@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, arg};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -14,32 +14,54 @@ struct CliArgs {
 #[derive(Subcommand)]
 enum Command {
     Run {
+        /// Number of runs to perform (default: 12)
         #[arg(short, long)]
-        single: bool,
+        runs: usize,
 
+        /// Number of warmup runs before benchmarking (default: 2)
         #[arg(short, long)]
-        all: bool,
+        warmups: Option<usize>,
 
+        /// Max threads to use in bench (default: single thread)
         #[arg(short, long)]
         max_threads: Option<usize>,
     },
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
+    use cbench::prelude::*;
     let args = CliArgs::parse();
 
     match args.command {
         Some(Command::Run {
-            single,
-            all,
+            runs,
+            warmups,
             max_threads,
         }) => {
-            todo!()
+            let available = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
+
+            let thread_num = max_threads.unwrap_or(available);
+
+            run_benchmark(runs, warmups, thread_num)?;
         }
         None => {
-            todo!()
+            print_none();
         }
     }
+
+    Ok(())
 }
 
-fn print_ascii() {}
+fn print_none() {
+    let ascii = "
+      ▄▄                      ▄▄
+      ██                      ██
+▄████ ████▄ ▄█▀█▄ ████▄ ▄████ ████▄
+██    ██ ██ ██▄█▀ ██ ██ ██    ██ ██
+▀████ ████▀ ▀█▄▄▄ ██ ██ ▀████ ██ ██
+    ";
+
+    println!("{}", ascii);
+}
