@@ -1,7 +1,8 @@
+use rayon::ThreadPool;
 use rayon::prelude::*;
 use wide::f64x8;
 
-#[inline]
+#[inline(always)]
 /// Dot-product with SIMD, does have simd fallback thanks to [`wide`](https://docs.rs/wide/latest/wide/)
 /// Returns value in `[-inf, inf]`
 pub fn dot_product(a: &[f64], b: &[f64]) -> f64 {
@@ -38,7 +39,7 @@ pub fn dot_product(a: &[f64], b: &[f64]) -> f64 {
     total
 }
 
-/// Multiplies a matrix (flattened) with a vector, returning the resulting vector.
+/// Multiple matrix with vec, returning the resulting vector. [BLAS 2]
 /// The matrix is expected to be in row-major order and the dimensions must match,
 #[inline]
 pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
@@ -63,15 +64,47 @@ pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
     vec
 }
 
+/// Multiply two matrices (dim x dim), returning the resulting matrix. [BLAS 3]
+/// Both matrices are expected to be in row-major order.
+#[inline]
+pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<f64> {
+    if dim == 0 {
+        panic!("Dimension must be greater than zero");
+    }
+    if matrix_a.len() != dim * dim || matrix_b.len() != dim * dim {
+        panic!(
+            "Dimension mismatch: expected {} elements, a has {}, b has {}",
+            dim * dim,
+            matrix_a.len(),
+            matrix_b.len()
+        );
+    }
+
+    let mut result = vec![0.0f64; dim * dim];
+
+    // Transpose matrix B to easy access pattern for dot product
+    let mut b_t = vec![0.0f64; dim * dim];
+    for col in 0..dim {
+        for row in 0..dim {
+            b_t[col * dim + row] = matrix_b[row * dim + col];
+        }
+    }
+
+    for row in 0..dim {
+        let a_row = &matrix_a[row * dim..(row + 1) * dim];
+        for col in 0..dim {
+            let b_col = &b_t[col * dim..(col + 1) * dim];
+            result[row * dim + col] = dot_product(a_row, b_col);
+        }
+    }
+
+    result
+}
+
 /// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`
 #[inline]
-pub fn generate_vectors(vector_num: usize, dimensions: usize, thread_num: usize) -> Vec<Vec<f64>> {
+pub fn generate_vectors(vector_num: usize, dimensions: usize, pool: &ThreadPool) -> Vec<Vec<f64>> {
     let mut result = vec![vec![0.0f64; dimensions]; vector_num];
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(thread_num)
-        .build()
-        .unwrap();
 
     pool.install(|| {
         result.par_iter_mut().for_each(|v| {
@@ -92,25 +125,42 @@ pub fn get_bytes(size: u32) -> Vec<u8> {
 }
 
 #[test]
-fn test_parallel() {
+fn test_thread_gen() {
     use std::hint::black_box;
     use std::time::Instant;
     let num_vectors = 1024 * 1024;
-    let dimensions = 512;
+    let dimensions = 1024;
+
+    let thread_1 = 24;
+    let pool_1 = rayon::ThreadPoolBuilder::new()
+        .num_threads(thread_1)
+        .build()
+        .unwrap();
 
     let start_1 = Instant::now();
-    let exec_1 = generate_vectors(num_vectors, dimensions, 24);
+    let exec_1 = generate_vectors(num_vectors, dimensions, &pool_1);
     let elapsed_1 = start_1.elapsed();
     black_box(exec_1); // Prevent compiler from optimizing away the result
 
+    drop(pool_1); // Explicitly drop the thread pool to free resources before the next test
+
+    let thread_2 = 1;
+    let pool_2 = rayon::ThreadPoolBuilder::new()
+        .num_threads(thread_2)
+        .build()
+        .unwrap();
+
     let start_2 = Instant::now();
-    let exec_2 = generate_vectors(num_vectors, dimensions, 1);
+    let exec_2 = generate_vectors(num_vectors, dimensions, &pool_2);
     let elapsed_2 = start_2.elapsed();
     black_box(exec_2);
 
+    drop(pool_2);
+
     println!(
-        "Generated {} vectors of dimension {} in {:?} (24 threads) vs {:?} (1 threads)",
-        num_vectors, dimensions, elapsed_1, elapsed_2
+        "Generated {} vectors of dimension {} in {:?} ({} threads) vs {:?} ({} thread)",
+        num_vectors, dimensions, elapsed_1, thread_1, elapsed_2, thread_2
     );
+
     assert!(elapsed_1 < elapsed_2);
 }
