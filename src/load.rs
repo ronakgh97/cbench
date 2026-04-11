@@ -27,7 +27,7 @@ pub fn dot_product_x8(a: &[f64], b: &[f64]) -> f64 {
         sum += va * vb;
     }
 
-    let mut total_sum: f64 = sum.to_array().iter().sum();
+    let mut total_sum = from_f64x8(sum);
 
     // Handle remainder
     let remainder_start = chunks * 8;
@@ -74,12 +74,18 @@ pub fn dot_product_x16(a: &[f64], b: &[f64]) -> f64 {
             let vb = f32x16::from(tb);
             sum += va * vb;
         }
-        let mut tot_sum = sum.to_array().iter().sum::<f32>() as f64;
+
+        let mut total = 0.0f64;
+
+        for &n in &sum.to_array() {
+            total += n as f64;
+        }
+
         let remainder_start = chunks * 16;
         for i in remainder_start..a.len() {
-            tot_sum += a[i] * b[i];
+            total += a[i] * b[i];
         }
-        tot_sum
+        total
     } else {
         dot_product_x8(a, b)
     }
@@ -157,8 +163,6 @@ pub fn matrix_matrix_mul(
     // Transpose matrix B to easy access pattern for dot product
     let b_t = transpose_matrix(rows_b, cols_b, matrix_b);
 
-    let to_f64: fn(f64x8: f64x8) -> f64 = |v: f64x8| v.to_array().iter().sum();
-
     for row in 0..rows_a {
         let a_row = &matrix_a[row * cols_a..(row + 1) * cols_a];
 
@@ -196,10 +200,10 @@ pub fn matrix_matrix_mul(
             }
 
             let base = row * cols_b + col;
-            result[base] = to_f64(sum0);
-            result[base + 1] = to_f64(sum1);
-            result[base + 2] = to_f64(sum2);
-            result[base + 3] = to_f64(sum3);
+            result[base] = from_f64x8(sum0);
+            result[base + 1] = from_f64x8(sum1);
+            result[base + 2] = from_f64x8(sum2);
+            result[base + 3] = from_f64x8(sum3);
 
             // Handle leftover, using the tracker to continue from where we left off
             for lf in t..cols_a {
@@ -238,12 +242,19 @@ pub fn transpose_matrix(rows: usize, cols: usize, matrix: &[f64]) -> Vec<f64> {
     }
 
     let mut transposed = vec![0.0f64; rows * cols];
-    for row in 0..rows {
-        for col in 0..cols {
-            transposed[col * rows + row] = matrix[row * cols + col];
+    for col in 0..cols {
+        let start = col * rows;
+        for row in 0..rows {
+            transposed[start + row] = matrix[row * cols + col];
         }
     }
     transposed
+}
+
+#[inline(always)]
+fn from_f64x8(v: f64x8) -> f64 {
+    let a = v.to_array();
+    a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7]
 }
 
 /// Generates a flat random square matrix of given dimension with values in range `[-1.0, 1.0]`
@@ -357,7 +368,7 @@ fn test_matmul() -> anyhow::Result<()> {
     use std::time::Instant;
 
     let dim = 2048;
-    let runs = 6;
+    let runs = 8;
 
     let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
 

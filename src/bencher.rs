@@ -13,7 +13,6 @@ const SAMPLE_SIZE: usize = 2048;
 pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> anyhow::Result<()> {
     let warmup_runs = warmups.unwrap_or(2);
 
-    println!("Running benchmarks...");
     println!(
         "Warmup runs: {}, Benchmark runs: {}, Threads: {}",
         warmup_runs, runs, max_thread
