@@ -7,9 +7,26 @@ edition = "2024"
 name = "cbench"
 path = "src/bin/main.rs"
 
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false
+debug = false
+
+[profile.dev]
+opt-level = 1
+strip = false
+debug = true
+incremental = true
+
 [dependencies]
+# tokio = { version = "1.51.1", features = ["full"] } # we need this for GPU benchmarking since wgpu is async
 clap = { version = "4.6.0", features = ["derive"] }
 rayon = "1.11.0"# this deps will be replaced with my manual thread pool implementation in the future
-wide = "1.2.0"
+wide = "1.2.0" # this deps will be replaced with rust std unsafe SIMD in the future
 fastrand = "2.4.1"
 anyhow = "1.0.102"
+# wgpu = "29.0.1" # this deps will be added in the future for GPU benchmarking

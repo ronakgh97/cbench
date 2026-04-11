@@ -1,6 +1,5 @@
-cbench is a microbenchmark for testing the performance of CPU via maths operations [
-BLAS](https://www.netlib.org/blas/) and scores in terms of FLOPS or GFLOPS (Giga
-Floating Point Operations Per Second), for `matmul` its approx to ~ `2 * N^3` ops/time
+cbench is a microbenchmark tool for CPU & GPU via maths operations [BLAS](https://www.netlib.org/blas/) and scores in
+terms of FLOPS or GFLOPS (Giga Floating Point Operations Per Second), for `matmul` its approx to ~ `2 * N^3` ops/time
 
 ```shell
 cbench run -r 5 -w 2 -m 24
@@ -16,6 +15,8 @@ Average GFLOPS score: 9.85
 Total time: 3.4876907916666666min
 Checkout this page: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
+
+> NEED HELP WITH BLAS, GETTING MEMORY EXPLOSIONS 💥
 
 ref
 

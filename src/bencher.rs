@@ -11,10 +11,6 @@ use std::time::Instant;
 const SAMPLE_SIZE: usize = 2048;
 
 pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> anyhow::Result<()> {
-    let thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(max_thread)
-        .build()?;
-
     let warmup_runs = warmups.unwrap_or(2);
 
     println!("Running benchmarks...");
@@ -23,19 +19,22 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         warmup_runs, runs, max_thread
     );
 
+    let thread_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(max_thread)
+        .build()?;
+
     // Warmup phase
     {
         let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
         let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
 
         for _ in 0..warmup_runs {
-            let _ = matrix_matrix_mul(&matrix_a, &matrix_b, SAMPLE_SIZE);
+            black_box(matrix_matrix_mul(&matrix_a, &matrix_b, SAMPLE_SIZE));
         }
     }
 
     // Generate new matrics
     let mut matrix_vec = Vec::with_capacity(runs);
-
     for _ in 0..runs {
         if max_thread == 1 {
             let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
@@ -52,7 +51,8 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         }
     }
 
-    let mut score = Vec::with_capacity(runs);
+    let mut score: Vec<(f64, f64)> = vec![(0.0, 0.0); runs];
+    unsafe { score.set_len(runs) }; // Pre-allocate with uninitialized values
 
     for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
@@ -61,6 +61,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         } else {
             thread_pool.install(|| {
                 (0..max_thread).into_par_iter().for_each(|_| {
+                    //TODO: <-- This is real reason for memory spike, we are allocating b_t and result everytime
                     black_box(matrix_matrix_mul(&matrics.0, &matrics.1, SAMPLE_SIZE));
                 });
             });
@@ -71,7 +72,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         let total_flops = flops_per_mul * (max_thread as f64);
         let gflops = total_flops / elapsed / 1e9;
 
-        score.push((elapsed, gflops));
+        score[i] = (elapsed, gflops);
 
         println!(
             "Run {}: Time = {:.3?}s, GFLOPS = {:.2}",
@@ -87,7 +88,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     println!("Average GFLOPS score: {:.2}", avg_gflops);
     println!("Total time: {}min", (total_time / 60.0) as f32);
 
-    println!("Checkout this page: https://boinc.bakerlab.org/rosetta/cpu_list.php");
+    println!("Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php");
 
     Ok(())
 }

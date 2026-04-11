@@ -22,7 +22,7 @@ enum Command {
         #[arg(short, long)]
         warmups: Option<usize>,
 
-        /// Max threads to use in bench (default: single thread)
+        /// Max threads to use in bench (default: all available thread)
         #[arg(short, long)]
         max_threads: Option<usize>,
     },

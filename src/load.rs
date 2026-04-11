@@ -41,7 +41,7 @@ pub fn dot_product(a: &[f64], b: &[f64]) -> f64 {
 
 /// Multiple matrix with vec, returning the resulting vector. [BLAS 2]
 /// The matrix is expected to be in row-major order and the dimensions must match,
-#[inline]
+#[inline(always)]
 #[allow(dead_code)]
 pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
     if dim == 0 {
@@ -67,8 +67,7 @@ pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize) -> Vec<f64> {
 
 /// Multiply two matrices (dim x dim), returning the resulting matrix. [BLAS 3]
 /// Both matrices are expected to be in row-major order.
-#[inline]
-#[allow(dead_code)]
+#[inline(always)]
 pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<f64> {
     if dim == 0 {
         panic!("Dimension must be greater than zero");
@@ -86,6 +85,9 @@ pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<
 
     // Transpose matrix B to easy access pattern for dot product
     let mut b_t = vec![0.0f64; dim * dim];
+    unsafe {
+        b_t.set_len(dim * dim);
+    }
     for col in 0..dim {
         for row in 0..dim {
             b_t[col * dim + row] = matrix_b[row * dim + col];
@@ -101,6 +103,24 @@ pub fn matrix_matrix_mul(matrix_a: &[f64], matrix_b: &[f64], dim: usize) -> Vec<
     }
 
     result
+}
+
+#[inline(always)]
+#[allow(dead_code)]
+/// Transpose a square matrix (dim x dim) represented as a flat vector. Returns the transposed matrix in row-major order.
+pub fn transpose_matrix(matrix: &[f64]) -> Vec<f64> {
+    let dim = (matrix.len() as f64).sqrt() as usize;
+    if dim * dim != matrix.len() {
+        panic!("Input must be a square matrix");
+    }
+
+    let mut transposed = vec![0.0f64; matrix.len()];
+    for row in 0..dim {
+        for col in 0..dim {
+            transposed[col * dim + row] = matrix[row * dim + col];
+        }
+    }
+    transposed
 }
 
 /// Generates a flat random square matrix of given dimension with values in range `[-1.0, 1.0]`
