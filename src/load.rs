@@ -1,3 +1,4 @@
+use std::ptr::read_unaligned;
 use std::slice::from_raw_parts;
 use wide::{f32x16, f64x8};
 
@@ -23,10 +24,16 @@ pub fn dot_product_x8(a: &[f64], b: &[f64]) -> f64 {
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * 8;
-        let va = f64x8::from(unsafe { from_raw_parts(a_ptr.add(offset), 8) });
-        let vb = f64x8::from(unsafe { from_raw_parts(b_ptr.add(offset), 8) });
-        sum = va.mul_add(vb, sum);
+        unsafe {
+            let offset = i * 8;
+
+            let va_ptr = a_ptr.add(offset);
+            let ba_ptr = b_ptr.add(offset);
+
+            let va = f64x8::from(from_raw_parts(va_ptr, 8));
+            let vb = f64x8::from(from_raw_parts(ba_ptr, 8));
+            sum = va.mul_add(vb, sum);
+        }
     }
 
     let mut total_sum = from_f64x8(sum);
@@ -183,10 +190,10 @@ pub fn gemv_into(
                 let p2 = matrix.as_ptr().add(strt2 + k);
                 let p3 = matrix.as_ptr().add(strt3 + k);
 
-                let a0 = f64x8::from(from_raw_parts(p0, width));
-                let a1 = f64x8::from(from_raw_parts(p1, width));
-                let a2 = f64x8::from(from_raw_parts(p2, width));
-                let a3 = f64x8::from(from_raw_parts(p3, width));
+                let a0 = f64x8::from(read_unaligned(p0 as *const [f64; 8]));
+                let a1 = f64x8::from(read_unaligned(p1 as *const [f64; 8]));
+                let a2 = f64x8::from(read_unaligned(p2 as *const [f64; 8]));
+                let a3 = f64x8::from(read_unaligned(p3 as *const [f64; 8]));
 
                 sum0 = a0.mul_add(v, sum0);
                 sum1 = a1.mul_add(v, sum1);
@@ -308,7 +315,6 @@ pub fn gemm_into(
     }
 
     transpose_mat_into(rows_b, cols_b, matrix_b, b_t);
-    result.fill(0.0);
 
     let b_ptr = b_t.as_ptr();
 
@@ -331,17 +337,25 @@ pub fn gemm_into(
             let b2_strt = (col + 2) * cols_a;
             let b3_strt = (col + 3) * cols_a;
 
+            let a_ptr = a_row.as_ptr();
+
             let mut t = 0;
             while t + offset <= cols_a {
-                // Pull 8 elements from the current row of A
-                let va = f64x8::from(&a_row[t..t + offset]);
-
                 unsafe {
+                    // Pull 8 elements from the current row of A
+                    let va_ptr = a_ptr.add(t);
+                    let va = f64x8::from(read_unaligned(va_ptr as *const [f64; 8]));
+
+                    let b0_ptr = b_ptr.add(b0_strt + t);
+                    let b1_ptr = b_ptr.add(b1_strt + t);
+                    let b2_ptr = b_ptr.add(b2_strt + t);
+                    let b3_ptr = b_ptr.add(b3_strt + t);
+
                     // Pull 8 elements from the columns of B (which are rows in b_t)
-                    let b0 = f64x8::from(from_raw_parts(b_ptr.add(b0_strt + t), offset));
-                    let b1 = f64x8::from(from_raw_parts(b_ptr.add(b1_strt + t), offset));
-                    let b2 = f64x8::from(from_raw_parts(b_ptr.add(b2_strt + t), offset));
-                    let b3 = f64x8::from(from_raw_parts(b_ptr.add(b3_strt + t), offset));
+                    let b0 = f64x8::from(read_unaligned(b0_ptr as *const [f64; 8]));
+                    let b1 = f64x8::from(read_unaligned(b1_ptr as *const [f64; 8]));
+                    let b2 = f64x8::from(read_unaligned(b2_ptr as *const [f64; 8]));
+                    let b3 = f64x8::from(read_unaligned(b3_ptr as *const [f64; 8]));
 
                     sum0 = va.mul_add(b0, sum0);
                     sum1 = va.mul_add(b1, sum1);
