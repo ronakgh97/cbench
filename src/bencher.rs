@@ -1,8 +1,8 @@
-use crate::load::{generate_matrix, matrix_matrix_mul_into};
+use crate::load::gemm_into;
+use crate::rand::gen_mat;
 use rayon::prelude::*;
 use std::hint::black_box;
 use std::time::Instant;
-
 // TODO: Random generation are pain and should consider inside bench loop, Need better scoring
 // TODO: Currently this runs matmul on given threads, and compute `flops` * thread_num,
 //  but I think we should parallelize matmul computation internally and fix the flops calculation....not run them in each threads?
@@ -28,11 +28,11 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
 
     // Warmup phase (single-thread)
     {
-        let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
-        let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
+        let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
+        let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
 
         for _ in 0..warmup_runs {
-            matrix_matrix_mul_into(
+            gemm_into(
                 &matrix_a,
                 &matrix_b,
                 SAMPLE_SIZE,
@@ -50,14 +50,14 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     let mut matrix_vec = Vec::with_capacity(runs);
     for _ in 0..runs {
         if max_thread == 1 {
-            let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
-            let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
+            let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
+            let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
             matrix_vec.push((matrix_a, matrix_b));
         } else {
             let (matrix_a, matrix_b) = thread_pool.install(|| {
                 rayon::join(
-                    || generate_matrix(SAMPLE_SIZE, &thread_pool),
-                    || generate_matrix(SAMPLE_SIZE, &thread_pool),
+                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool),
+                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool),
                 )
             });
             matrix_vec.push((matrix_a, matrix_b));
@@ -69,7 +69,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
-            matrix_matrix_mul_into(
+            gemm_into(
                 &matrics.0,
                 &matrics.1,
                 SAMPLE_SIZE,
@@ -85,7 +85,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
                 (0..max_thread).into_par_iter().for_each(|_| {
                     let mut res = vec![0.0f64; mat_len];
                     let mut bt = vec![0.0f64; mat_len];
-                    matrix_matrix_mul_into(
+                    gemm_into(
                         &matrics.0,
                         &matrics.1,
                         SAMPLE_SIZE,

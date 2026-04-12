@@ -1,5 +1,4 @@
-use rayon::ThreadPool;
-use rayon::prelude::*;
+use std::slice::from_raw_parts;
 use wide::{f32x16, f64x8};
 
 #[inline(always)]
@@ -25,8 +24,8 @@ pub fn dot_product_x8(a: &[f64], b: &[f64]) -> f64 {
 
     for i in 0..chunks {
         let offset = i * 8;
-        let va = f64x8::from(unsafe { std::slice::from_raw_parts(a_ptr.add(offset), 8) });
-        let vb = f64x8::from(unsafe { std::slice::from_raw_parts(b_ptr.add(offset), 8) });
+        let va = f64x8::from(unsafe { from_raw_parts(a_ptr.add(offset), 8) });
+        let vb = f64x8::from(unsafe { from_raw_parts(b_ptr.add(offset), 8) });
         sum = va.mul_add(vb, sum);
     }
 
@@ -94,46 +93,148 @@ pub fn dot_product_x16(a: &[f64], b: &[f64]) -> f64 {
     }
 }
 
-/// Multiple matrix with vec, returning the resulting vector.
-/// The matrix is expected to be in row-major order and the dimensions must match,
-#[inline]
-#[allow(dead_code)]
-pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize, use_x16: bool) -> Vec<f64> {
+/// Matrix-vector multiplication, multiplies a matrix (rows x cols) with a vector of dimension `dim`, returning the resulting vector of size `rows`.
+/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
+#[inline(always)]
+pub fn gemv(
+    matrix: &[f64],
+    rows: usize,
+    cols: usize,
+    vector: &[f64],
+    dim: usize,
+    use_x16: bool,
+) -> Vec<f64> {
+    // Result of matrix-vector multiplication is a vector of length `rows`.
+    let mut out = vec![0.0f64; rows];
+
+    gemv_into(matrix, rows, cols, vector, dim, &mut out, use_x16);
+    out
+}
+
+/// Matrix-vector multiplication, similar to [`gemv`](gemv), but the result is stored in the provided `res` slice, which must be pre-allocated to the correct size (rows).
+/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
+/// The `use_x16` flag is for AVX-512 compatibility
+#[inline(always)]
+pub fn gemv_into(
+    matrix: &[f64],
+    rows: usize,
+    cols: usize,
+    vector: &[f64],
+    dim: usize,
+    res: &mut [f64],
+    use_x16: bool,
+) {
     if dim == 0 {
         panic!("Dimension must be greater than zero");
     }
-    if vector.len() != dim || matrix.len() != dim * dim {
+
+    if cols != dim {
         panic!(
-            "Dimension mismatch: matrix has {} rows, vector has {} elements, expected dimension {}",
-            matrix.len() / dim,
+            "Matrix columns must match provided dimension, got cols: {}, dimension: {}",
+            cols, dim
+        );
+    }
+
+    if vector.len() != dim {
+        panic!(
+            "Vector length must equal dimension, got vector length: {}, dimension: {}",
             vector.len(),
             dim
         );
     }
 
-    let mut vec = vec![0.0f64; dim];
+    if res.len() != rows {
+        panic!(
+            "Result buffer length must equal number of rows: {} != {}",
+            res.len(),
+            rows
+        );
+    }
 
-    if use_x16 {
-        for (i, out) in vec.iter_mut().enumerate() {
-            let row = &matrix[i * dim..(i + 1) * dim];
-            *out = dot_product_x16(row, vector);
+    let is_x16 = use_x16 && is_x86_feature_detected!("avx512f");
+
+    // Process 4 rows at a time and use 8-wide across the columns.
+    let width = 8;
+    let row_limit = rows - (rows % 4);
+
+    for i in (0..row_limit).step_by(4) {
+        let strt0 = cols * i;
+        let strt1 = cols * (i + 1);
+        let strt2 = cols * (i + 2);
+        let strt3 = cols * (i + 3);
+
+        // let row0 = &matrix[i * cols..i * cols + cols];
+        // let row1 = &matrix[(i + 1) * cols..(i + 1) * cols + cols];
+        // let row2 = &matrix[(i + 2) * cols..(i + 2) * cols + cols];
+        // let row3 = &matrix[(i + 3) * cols..(i + 3) * cols + cols];
+
+        let mut sum0 = f64x8::ZERO;
+        let mut sum1 = f64x8::ZERO;
+        let mut sum2 = f64x8::ZERO;
+        let mut sum3 = f64x8::ZERO;
+
+        let mut k = 0;
+        while k + width <= cols {
+            let v = f64x8::from(&vector[k..k + width]);
+
+            unsafe {
+                let p0 = matrix.as_ptr().add(strt0 + k);
+                let p1 = matrix.as_ptr().add(strt1 + k);
+                let p2 = matrix.as_ptr().add(strt2 + k);
+                let p3 = matrix.as_ptr().add(strt3 + k);
+
+                let a0 = f64x8::from(from_raw_parts(p0, width));
+                let a1 = f64x8::from(from_raw_parts(p1, width));
+                let a2 = f64x8::from(from_raw_parts(p2, width));
+                let a3 = f64x8::from(from_raw_parts(p3, width));
+
+                sum0 = a0.mul_add(v, sum0);
+                sum1 = a1.mul_add(v, sum1);
+                sum2 = a2.mul_add(v, sum2);
+                sum3 = a3.mul_add(v, sum3);
+            }
+            k += width;
         }
-        return vec;
+
+        let mut r0 = from_f64x8(sum0);
+        let mut r1 = from_f64x8(sum1);
+        let mut r2 = from_f64x8(sum2);
+        let mut r3 = from_f64x8(sum3);
+
+        // Handle tail
+        #[allow(clippy::needless_range_loop)]
+        for n in k..cols {
+            let v = vector[n];
+            unsafe {
+                r0 += *matrix.as_ptr().add(strt0 + n) * v;
+                r1 += *matrix.as_ptr().add(strt1 + n) * v;
+                r2 += *matrix.as_ptr().add(strt2 + n) * v;
+                r3 += *matrix.as_ptr().add(strt3 + n) * v;
+            }
+        }
+
+        res[i] = r0;
+        res[i + 1] = r1;
+        res[i + 2] = r2;
+        res[i + 3] = r3;
     }
 
-    for (i, out) in vec.iter_mut().enumerate() {
-        let row = &matrix[i * dim..(i + 1) * dim];
-        *out = dot_product_x8(row, vector);
-    }
+    // Handle leftover rows that don't fit into a 4-row block
+    for i in row_limit..rows {
+        let row = &matrix[i * cols..(i + 1) * cols];
 
-    vec
+        res[i] = if is_x16 {
+            dot_product_x16(row, vector)
+        } else {
+            dot_product_x8(row, vector)
+        };
+    }
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 /// Multiply two matrices using 4 simd registers at a time, fallbacks if less, returning the resulting matrix
 /// The matrices are expected to be in row-major order and the dimensions must match
-pub fn matrix_matrix_mul(
+pub fn gemm(
     matrix_a: &[f64],
     matrix_b: &[f64],
     rows_a: usize,
@@ -143,24 +244,24 @@ pub fn matrix_matrix_mul(
 ) -> Vec<f64> {
     let mut result = vec![0.0f64; rows_a * cols_b];
     let mut b_t = vec![0.0f64; rows_b * cols_b];
-    matrix_matrix_mul_into(
+    gemm_into(
         matrix_a,
         matrix_b,
         rows_a,
         cols_a,
         rows_b,
         cols_b,
-        &mut result,
         &mut b_t,
+        &mut result,
     );
     result
 }
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-/// In-place matrix multiplication, similar to [`matmul`](matrix_matrix_mul), but the result is stored in the provided `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
+/// In-place matrix multiplication, similar to [`matmul`](gemm), but the result is stored in the provided `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
 /// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
-pub fn matrix_matrix_mul_into(
+pub fn gemm_into(
     matrix_a: &[f64],
     matrix_b: &[f64],
     rows_a: usize,
@@ -171,26 +272,42 @@ pub fn matrix_matrix_mul_into(
     result: &mut [f64],
 ) {
     if cols_a != rows_b {
-        panic!("cols_a {} != rows_b {}", cols_a, rows_b);
-    }
-    let exp_a = rows_a * cols_a;
-    let exp_b = rows_b * cols_b;
-    let exp_res = rows_a * cols_b;
-    if matrix_a.len() != exp_a
-        || matrix_b.len() != exp_b
-        || result.len() != exp_res
-        || b_t.len() != exp_b
-    {
         panic!(
-            "size mismatch: a={} b={} res={} bt={}",
-            exp_a,
-            exp_b,
-            exp_res,
-            b_t.len()
+            "Inner dimensions must match for multiplication, got cols_a: {}, rows_b: {}",
+            cols_a, rows_b
         );
     }
 
-    transpose_matrix_into(rows_b, cols_b, matrix_b, b_t);
+    let size_a = rows_a * cols_a;
+    let size_b = rows_b * cols_b;
+    let size_res = rows_a * cols_b;
+    if matrix_a.len() != size_a
+        || matrix_b.len() != size_b
+        || result.len() != size_res
+        || b_t.len() != size_b
+    {
+        panic!(
+            "Size mismatch: matrix_a {}, matrix_b {}, result {}, b_t {}, expected a {}, b {}, result {}, b_t {}",
+            matrix_a.len(),
+            matrix_b.len(),
+            result.len(),
+            b_t.len(),
+            size_a,
+            size_b,
+            size_res,
+            size_b,
+        );
+    }
+
+    if result.len() != size_res {
+        panic!(
+            "Result buffer size mismatch: expected {}, got {}",
+            size_res,
+            result.len()
+        );
+    }
+
+    transpose_mat_into(rows_b, cols_b, matrix_b, b_t);
     result.fill(0.0);
 
     let b_ptr = b_t.as_ptr();
@@ -221,14 +338,10 @@ pub fn matrix_matrix_mul_into(
 
                 unsafe {
                     // Pull 8 elements from the columns of B (which are rows in b_t)
-                    let b0 =
-                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b0_strt + t), offset));
-                    let b1 =
-                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b1_strt + t), offset));
-                    let b2 =
-                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b2_strt + t), offset));
-                    let b3 =
-                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b3_strt + t), offset));
+                    let b0 = f64x8::from(from_raw_parts(b_ptr.add(b0_strt + t), offset));
+                    let b1 = f64x8::from(from_raw_parts(b_ptr.add(b1_strt + t), offset));
+                    let b2 = f64x8::from(from_raw_parts(b_ptr.add(b2_strt + t), offset));
+                    let b3 = f64x8::from(from_raw_parts(b_ptr.add(b3_strt + t), offset));
 
                     sum0 = va.mul_add(b0, sum0);
                     sum1 = va.mul_add(b1, sum1);
@@ -262,20 +375,19 @@ pub fn matrix_matrix_mul_into(
     }
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 /// Transpose a matrix (cols x rows) represented as a flat vector.
 /// Returns the transposed matrix in row-major order.
-pub fn transpose_matrix(rows: usize, cols: usize, matrix: &[f64]) -> Vec<f64> {
+pub fn transpose_mat(rows: usize, cols: usize, matrix: &[f64]) -> Vec<f64> {
     let mut transposed = vec![0.0f64; rows * cols];
-    transpose_matrix_into(rows, cols, matrix, &mut transposed);
+    transpose_mat_into(rows, cols, matrix, &mut transposed);
     transposed
 }
 
 #[inline(always)]
 /// In-place transpose of a matrix, the input and output slices must be the same size and the matrix is expected to be in row-major order.
 /// The output will also be in row-major order but with rows and columns swapped.
-pub fn transpose_matrix_into(rows: usize, cols: usize, matrix: &[f64], output: &mut [f64]) {
+pub fn transpose_mat_into(rows: usize, cols: usize, matrix: &[f64], output: &mut [f64]) {
     let len = rows * cols;
     if len != matrix.len() || len != output.len() {
         panic!(
@@ -300,63 +412,9 @@ fn from_f64x8(v: f64x8) -> f64 {
     a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7]
 }
 
-/// Generates a flat random square matrix of given dimension with values in range `[-1.0, 1.0]`
-#[inline]
-pub fn generate_matrix(dim: usize, pool: &ThreadPool) -> Vec<f64> {
-    if dim == 0 {
-        panic!("Dimension must be greater than zero");
-    }
-
-    let mut matrix = vec![0.0f64; dim * dim];
-
-    pool.install(|| {
-        matrix.par_iter_mut().for_each(|x| {
-            *x = fastrand::f64() * 2.0 - 1.0;
-        });
-    });
-
-    matrix
-}
-
-/// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`
-#[inline]
-#[allow(dead_code)]
-pub fn generate_vectors(
-    vector_num: usize,
-    dimensions: usize,
-    pool: Option<&ThreadPool>,
-) -> Vec<Vec<f64>> {
-    let mut result = vec![vec![0.0f64; dimensions]; vector_num];
-
-    if let Some(pool) = pool {
-        pool.install(|| {
-            result.par_iter_mut().for_each(|v| {
-                for x in v {
-                    *x = fastrand::f64() * 2.0 - 1.0;
-                }
-            });
-        });
-
-        result
-    } else {
-        for v in &mut result {
-            for x in v {
-                *x = fastrand::f64() * 2.0 - 1.0;
-            }
-        }
-        result
-    }
-}
-
-/// Generates a random byte vector of given size, useful for testing with binary data operations
-#[inline]
-#[allow(dead_code)]
-pub fn get_bytes(size: u32) -> Vec<u8> {
-    (0..size).map(|_| fastrand::u8(..)).collect()
-}
-
 #[test]
 fn test_simd() -> anyhow::Result<()> {
+    use crate::rand::gen_mat;
     use rayon::ThreadPoolBuilder;
     use std::hint::black_box;
     use std::time::Instant;
@@ -368,8 +426,8 @@ fn test_simd() -> anyhow::Result<()> {
     let mut res_x16: f64 = 0.0;
     let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
 
-    let matrix_a = generate_matrix(dim, &thread_pool);
-    let matrix_b = generate_matrix(dim, &thread_pool);
+    let matrix_a = gen_mat(dim, dim, &thread_pool);
+    let matrix_b = gen_mat(dim, dim, &thread_pool);
 
     let start_x8 = Instant::now();
     for _ in 0..runs {
@@ -405,7 +463,63 @@ fn test_simd() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_matmul() -> anyhow::Result<()> {
+fn test_gemv() -> anyhow::Result<()> {
+    use crate::rand::gen_mat;
+    use crate::rand::gen_vec;
+    use rayon::ThreadPoolBuilder;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let dim = 2048;
+    let runs = 16;
+
+    let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
+
+    let matrix = gen_mat(dim, dim, &thread_pool);
+    let vec = gen_vec(1, dim, Some(&thread_pool));
+
+    let start = Instant::now();
+    for _ in 0..runs {
+        black_box(gemv(&matrix, dim, dim, &vec[0], dim, true));
+    }
+    let duration = start.elapsed().as_secs_f64();
+
+    let flops_per_mul = 2.0 * dim.pow(2) as f64;
+    let gflops = flops_per_mul / duration / 1e9;
+
+    println!(
+        "Time for {} runs of {}x{} gemv: {:.3} seconds, GFLOPS: {:.3}",
+        runs, dim, dim, duration, gflops
+    );
+
+    let matrix = gen_mat(dim, dim, &thread_pool);
+    let vec = gen_vec(1, dim, Some(&thread_pool));
+
+    let mut out = vec![0.0f64; dim];
+
+    let start = Instant::now();
+    for _ in 0..runs {
+        gemv_into(&matrix, dim, dim, &vec[0], dim, &mut out, true);
+        black_box(());
+    }
+    let duration = start.elapsed().as_secs_f64();
+
+    let flops_per_mul = 2.0 * dim.pow(2) as f64;
+    let gflops = flops_per_mul / duration / 1e9;
+
+    println!(
+        "Time for {} runs of {}x{} gemv(in-place): {:.3} seconds, GFLOPS: {:.3}",
+        runs, dim, dim, duration, gflops
+    );
+
+    assert_eq!(out.len(), dim);
+
+    Ok(())
+}
+
+#[test]
+fn test_gemm() -> anyhow::Result<()> {
+    use crate::rand::gen_mat;
     use rayon::ThreadPoolBuilder;
     use std::hint::black_box;
     use std::time::Instant;
@@ -415,12 +529,12 @@ fn test_matmul() -> anyhow::Result<()> {
 
     let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
 
-    let matrix_a = generate_matrix(dim, &thread_pool);
-    let matrix_b = generate_matrix(dim, &thread_pool);
+    let matrix_a = gen_mat(dim, dim, &thread_pool);
+    let matrix_b = gen_mat(dim, dim, &thread_pool);
 
     let start = Instant::now();
     for _ in 0..runs {
-        black_box(matrix_matrix_mul(&matrix_a, &matrix_b, dim, dim, dim, dim));
+        black_box(gemm(&matrix_a, &matrix_b, dim, dim, dim, dim));
     }
     let duration = start.elapsed().as_secs_f64();
 
@@ -428,7 +542,7 @@ fn test_matmul() -> anyhow::Result<()> {
     let gflops = flops_per_mul / duration / 1e9;
 
     println!(
-        "Time for {} runs of {}x{} matmul: {:.3} seconds, GFLOPS: {:.3}",
+        "Time for {} runs of {}x{} gemm: {:.3} seconds, GFLOPS: {:.3}",
         runs, dim, dim, duration, gflops
     );
 
@@ -437,7 +551,7 @@ fn test_matmul() -> anyhow::Result<()> {
 
     let start = Instant::now();
     for _ in 0..runs {
-        matrix_matrix_mul_into(
+        gemm_into(
             &matrix_a,
             &matrix_b,
             dim,
@@ -455,7 +569,7 @@ fn test_matmul() -> anyhow::Result<()> {
     let gflops = flops_per_mul / duration / 1e9;
 
     println!(
-        "Time for {} runs of {}x{} matmul(in-place): {:.3} seconds, GFLOPS: {:.3}",
+        "Time for {} runs of {}x{} gemm(in-place): {:.3} seconds, GFLOPS: {:.3}",
         runs, dim, dim, duration, gflops
     );
 
@@ -467,6 +581,7 @@ fn test_matmul() -> anyhow::Result<()> {
 
 #[test]
 fn test_thread_gen() {
+    use crate::rand::gen_mat;
     use rayon::ThreadPoolBuilder;
     use std::hint::black_box;
     use std::time::Instant;
@@ -482,7 +597,7 @@ fn test_thread_gen() {
         .unwrap();
 
     let start_1 = Instant::now();
-    let exec_1 = generate_matrix(dim, &pool_1);
+    let exec_1 = gen_mat(dim, dim, &pool_1);
     let elapsed_1 = start_1.elapsed();
 
     black_box(exec_1); // Prevent compiler from optimizing away the result
@@ -495,7 +610,7 @@ fn test_thread_gen() {
         .unwrap();
 
     let start_2 = Instant::now();
-    let exec_2 = generate_matrix(dim, &pool_2);
+    let exec_2 = gen_mat(dim, dim, &pool_2);
     let elapsed_2 = start_2.elapsed();
 
     black_box(exec_2);
