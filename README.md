@@ -1,5 +1,5 @@
-cbench is a microbenchmark tool for CPU & GPU via maths operations [BLAS](https://www.netlib.org/blas/) and scores in
-terms of FLOPS or GFLOPS (Giga Floating Point Operations Per Second), for `matmul` its approx to ~ `2 * N^3` ops/time
+**cbench** is a microbenchmark tool for CPU & GPU using maths operations [BLAS](https://www.netlib.org/blas/) and scores
+in terms of FLOPS or GFLOPS, for `matmul` its approx to ~ `2 * N^3` ops/time
 
 ```shell
 cbench run --runs 5 --warmups 2 --max-threads 12
@@ -15,7 +15,7 @@ Total time: 1.8059822min
 Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
 
-> NEED HELP WITH [BLAS](./src/load.rs), GETTING MEMORY EXPLOSIONS 💥
+> NEED HELP WITH [BLAS](./src/load.rs), getting memory Bottlenecks
 
 ref
 
@@ -23,7 +23,7 @@ ref
 - https://docs.rs/rayon-core/1.13.0/rayon_core/
 - https://doc.rust-lang.org/std/simd/
 - https://www.netlib.org/blas/
-- https://www.netlib.org/linpack/ (literal FORTRAN 💀💀💀)
+- https://www.netlib.org/benchmark/whetstone.c
 - https://setiathome.berkeley.edu/cpu_list.php
 - https://en.wikipedia.org/wiki/Floating_point_operations_per_second
 - https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms

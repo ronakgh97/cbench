@@ -1,4 +1,4 @@
-use crate::load::{generate_matrix, matrix_matrix_mul};
+use crate::load::{generate_matrix, matrix_matrix_mul_into};
 use rayon::prelude::*;
 use std::hint::black_box;
 use std::time::Instant;
@@ -22,20 +22,27 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         .num_threads(max_thread)
         .build()?;
 
-    // Warmup phase
+    let mat_len = SAMPLE_SIZE * SAMPLE_SIZE;
+    let mut buf_result = vec![0.0f64; mat_len];
+    let mut buf_b_t = vec![0.0f64; mat_len];
+
+    // Warmup phase (single-thread)
     {
         let matrix_a = generate_matrix(SAMPLE_SIZE, &thread_pool);
         let matrix_b = generate_matrix(SAMPLE_SIZE, &thread_pool);
 
         for _ in 0..warmup_runs {
-            black_box(matrix_matrix_mul(
+            matrix_matrix_mul_into(
                 &matrix_a,
                 &matrix_b,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
-            ));
+                &mut buf_b_t,
+                &mut buf_result,
+            );
+            black_box(&buf_result);
         }
     }
 
@@ -62,32 +69,39 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
-            black_box(matrix_matrix_mul(
+            matrix_matrix_mul_into(
                 &matrics.0,
                 &matrics.1,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
-            ));
+                &mut buf_b_t,
+                &mut buf_result,
+            );
+            black_box(&buf_result);
         } else {
             thread_pool.install(|| {
                 (0..max_thread).into_par_iter().for_each(|_| {
-                    //TODO: <-- This is real reason for memory spike, we are allocating b_t and result everytime
-                    black_box(matrix_matrix_mul(
+                    let mut res = vec![0.0f64; mat_len];
+                    let mut bt = vec![0.0f64; mat_len];
+                    matrix_matrix_mul_into(
                         &matrics.0,
                         &matrics.1,
                         SAMPLE_SIZE,
                         SAMPLE_SIZE,
                         SAMPLE_SIZE,
                         SAMPLE_SIZE,
-                    ));
+                        &mut bt,
+                        &mut res,
+                    );
+                    black_box(res);
                 });
             });
         }
         let elapsed = start.elapsed().as_secs_f64();
 
-        let flops_per_mul = 2.0 * (SAMPLE_SIZE as f64).powi(3);
+        let flops_per_mul = 2.0 * (SAMPLE_SIZE as f64).powi(3) - (SAMPLE_SIZE as f64).powi(2);
         let total_flops = flops_per_mul * (max_thread as f64);
         let gflops = total_flops / elapsed / 1e9;
 

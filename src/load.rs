@@ -4,7 +4,7 @@ use wide::{f32x16, f64x8};
 
 #[inline(always)]
 /// Dot-product with SIMD, has simd fallback thanks to [`wide`](https://docs.rs/wide/latest/wide/)
-/// Returns value in `[-inf, inf]`
+/// Returns value in `(-inf, inf)`
 pub fn dot_product_x8(a: &[f64], b: &[f64]) -> f64 {
     if a.is_empty() || b.is_empty() {
         // Yes, I'm doing this *unnecessary* check, because I like symmetric, so stfu
@@ -20,11 +20,14 @@ pub fn dot_product_x8(a: &[f64], b: &[f64]) -> f64 {
     let chunks = a.len() / 8;
     let mut sum = f64x8::ZERO;
 
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+
     for i in 0..chunks {
         let offset = i * 8;
-        let va = f64x8::from(&a[offset..offset + 8]);
-        let vb = f64x8::from(&b[offset..offset + 8]);
-        sum += va * vb;
+        let va = f64x8::from(unsafe { std::slice::from_raw_parts(a_ptr.add(offset), 8) });
+        let vb = f64x8::from(unsafe { std::slice::from_raw_parts(b_ptr.add(offset), 8) });
+        sum = va.mul_add(vb, sum);
     }
 
     let mut total_sum = from_f64x8(sum);
@@ -72,7 +75,7 @@ pub fn dot_product_x16(a: &[f64], b: &[f64]) -> f64 {
 
             let va = f32x16::from(ta);
             let vb = f32x16::from(tb);
-            sum += va * vb;
+            sum = va.mul_add(vb, sum);
         }
 
         let mut total = 0.0f64;
@@ -91,7 +94,7 @@ pub fn dot_product_x16(a: &[f64], b: &[f64]) -> f64 {
     }
 }
 
-/// Multiple matrix with vec, returning the resulting vector. [BLAS 2]
+/// Multiple matrix with vec, returning the resulting vector.
 /// The matrix is expected to be in row-major order and the dimensions must match,
 #[inline]
 #[allow(dead_code)]
@@ -126,9 +129,10 @@ pub fn matrix_vec_mul(matrix: &[f64], vector: &[f64], dim: usize, use_x16: bool)
     vec
 }
 
-/// Multiply two matrices using 4 simd registers at a time, fallbacks if less, returning the resulting matrix
-/// The matrices are expected to be in row-major order and the dimensions must match,
+#[allow(dead_code)]
 #[inline(always)]
+/// Multiply two matrices using 4 simd registers at a time, fallbacks if less, returning the resulting matrix
+/// The matrices are expected to be in row-major order and the dimensions must match
 pub fn matrix_matrix_mul(
     matrix_a: &[f64],
     matrix_b: &[f64],
@@ -137,31 +141,59 @@ pub fn matrix_matrix_mul(
     rows_b: usize,
     cols_b: usize,
 ) -> Vec<f64> {
-    if cols_a == 0 || rows_a == 0 || cols_b == 0 || rows_b == 0 {
-        panic!("Dimensions must be greater than zero");
-    }
-
-    if cols_a != rows_b {
-        panic!(
-            "cols_a & rows_b must match for multiplication: a has {} cols, b has {} rows",
-            cols_a, rows_b
-        );
-    }
-
-    if matrix_a.len() != rows_a * cols_a || matrix_b.len() != rows_b * cols_b {
-        panic!(
-            "Dimension mismatch: matrix_a has {} elements, expected {}, matrix_b has {} elements, expected {}",
-            matrix_a.len(),
-            rows_a * cols_a,
-            matrix_b.len(),
-            rows_b * cols_b
-        );
-    }
-
     let mut result = vec![0.0f64; rows_a * cols_b];
+    let mut b_t = vec![0.0f64; rows_b * cols_b];
+    matrix_matrix_mul_into(
+        matrix_a,
+        matrix_b,
+        rows_a,
+        cols_a,
+        rows_b,
+        cols_b,
+        &mut result,
+        &mut b_t,
+    );
+    result
+}
 
-    // Transpose matrix B to easy access pattern for dot product
-    let b_t = transpose_matrix(rows_b, cols_b, matrix_b);
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+/// In-place matrix multiplication, similar to [`matmul`](matrix_matrix_mul), but the result is stored in the provided `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
+/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
+pub fn matrix_matrix_mul_into(
+    matrix_a: &[f64],
+    matrix_b: &[f64],
+    rows_a: usize,
+    cols_a: usize,
+    rows_b: usize,
+    cols_b: usize,
+    b_t: &mut [f64],
+    result: &mut [f64],
+) {
+    if cols_a != rows_b {
+        panic!("cols_a {} != rows_b {}", cols_a, rows_b);
+    }
+    let exp_a = rows_a * cols_a;
+    let exp_b = rows_b * cols_b;
+    let exp_res = rows_a * cols_b;
+    if matrix_a.len() != exp_a
+        || matrix_b.len() != exp_b
+        || result.len() != exp_res
+        || b_t.len() != exp_b
+    {
+        panic!(
+            "size mismatch: a={} b={} res={} bt={}",
+            exp_a,
+            exp_b,
+            exp_res,
+            b_t.len()
+        );
+    }
+
+    transpose_matrix_into(rows_b, cols_b, matrix_b, b_t);
+    result.fill(0.0);
+
+    let b_ptr = b_t.as_ptr();
 
     for row in 0..rows_a {
         let a_row = &matrix_a[row * cols_a..(row + 1) * cols_a];
@@ -172,30 +204,37 @@ pub fn matrix_matrix_mul(
         // Step forward by 4 columns at a time
         for col in (0..col_limit).step_by(4) {
             let offset = 8;
-
-            // Process 4 columns at a time
             let mut sum0 = f64x8::ZERO;
             let mut sum1 = f64x8::ZERO;
             let mut sum2 = f64x8::ZERO;
             let mut sum3 = f64x8::ZERO;
 
-            let mut t = 0; // <-- Track the offset
-            // Loop till remainder
+            let b0_strt = col * cols_a;
+            let b1_strt = (col + 1) * cols_a;
+            let b2_strt = (col + 2) * cols_a;
+            let b3_strt = (col + 3) * cols_a;
+
+            let mut t = 0;
             while t + offset <= cols_a {
                 // Pull 8 elements from the current row of A
                 let va = f64x8::from(&a_row[t..t + offset]);
 
-                // Pull 8 elements from the columns of B (which are rows in b_t)
-                let b0 = f64x8::from(&b_t[col * cols_a + t..][..offset]);
-                let b1 = f64x8::from(&b_t[(col + 1) * cols_a + t..][..offset]);
-                let b2 = f64x8::from(&b_t[(col + 2) * cols_a + t..][..offset]);
-                let b3 = f64x8::from(&b_t[(col + 3) * cols_a + t..][..offset]);
+                unsafe {
+                    // Pull 8 elements from the columns of B (which are rows in b_t)
+                    let b0 =
+                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b0_strt + t), offset));
+                    let b1 =
+                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b1_strt + t), offset));
+                    let b2 =
+                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b2_strt + t), offset));
+                    let b3 =
+                        f64x8::from(std::slice::from_raw_parts(b_ptr.add(b3_strt + t), offset));
 
-                sum0 += va * b0;
-                sum1 += va * b1;
-                sum2 += va * b2;
-                sum3 += va * b3;
-
+                    sum0 = va.mul_add(b0, sum0);
+                    sum1 = va.mul_add(b1, sum1);
+                    sum2 = va.mul_add(b2, sum2);
+                    sum3 = va.mul_add(b3, sum3);
+                }
                 t += offset;
             }
 
@@ -221,34 +260,38 @@ pub fn matrix_matrix_mul(
             result[row * cols_b + col] = dot_product_x8(a_row, b_col);
         }
     }
-
-    result
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 /// Transpose a matrix (cols x rows) represented as a flat vector.
 /// Returns the transposed matrix in row-major order.
 pub fn transpose_matrix(rows: usize, cols: usize, matrix: &[f64]) -> Vec<f64> {
-    if rows == 0 || cols == 0 {
-        panic!("Dimension must be greater than zero");
-    }
+    let mut transposed = vec![0.0f64; rows * cols];
+    transpose_matrix_into(rows, cols, matrix, &mut transposed);
+    transposed
+}
 
-    if rows * cols != matrix.len() {
+#[inline(always)]
+/// In-place transpose of a matrix, the input and output slices must be the same size and the matrix is expected to be in row-major order.
+/// The output will also be in row-major order but with rows and columns swapped.
+pub fn transpose_matrix_into(rows: usize, cols: usize, matrix: &[f64], output: &mut [f64]) {
+    let len = rows * cols;
+    if len != matrix.len() || len != output.len() {
         panic!(
-            "Dimension mismatch: expected {} elements, got {}",
-            rows * cols,
-            matrix.len()
+            "size mismatch: rows={} cols={} input={} output={}",
+            rows,
+            cols,
+            matrix.len(),
+            output.len()
         );
     }
-
-    let mut transposed = vec![0.0f64; rows * cols];
     for col in 0..cols {
         let start = col * rows;
         for row in 0..rows {
-            transposed[start + row] = matrix[row * cols + col];
+            output[start + row] = matrix[row * cols + col];
         }
     }
-    transposed
 }
 
 #[inline(always)]
@@ -386,6 +429,33 @@ fn test_matmul() -> anyhow::Result<()> {
 
     println!(
         "Time for {} runs of {}x{} matmul: {:.3} seconds, GFLOPS: {:.3}",
+        runs, dim, dim, duration, gflops
+    );
+
+    let mut buf_result = vec![0.0f64; dim * dim];
+    let mut buf_b_t = vec![0.0f64; dim * dim];
+
+    let start = Instant::now();
+    for _ in 0..runs {
+        matrix_matrix_mul_into(
+            &matrix_a,
+            &matrix_b,
+            dim,
+            dim,
+            dim,
+            dim,
+            &mut buf_b_t,
+            &mut buf_result,
+        );
+        black_box(());
+    }
+    let duration = start.elapsed().as_secs_f64();
+
+    let flops_per_mul = (2.0 * (dim as f64).powi(3) - (dim as f64).powi(2)) * runs as f64;
+    let gflops = flops_per_mul / duration / 1e9;
+
+    println!(
+        "Time for {} runs of {}x{} matmul(in-place): {:.3} seconds, GFLOPS: {:.3}",
         runs, dim, dim, duration, gflops
     );
 
