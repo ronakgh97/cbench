@@ -119,7 +119,7 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     let avg_gflops = score.iter().map(|s| s.1).sum::<f64>() / (score.len() as f64);
     let total_time = score.iter().map(|s| s.0).sum::<f64>();
     println!("Average GFLOPS score: {:.2}", avg_gflops);
-    println!("Total time: {}min", (total_time / 60.0) as f32);
+    println!("Total time: {}s", total_time as f32);
 
     println!("Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php");
 

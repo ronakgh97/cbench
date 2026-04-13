@@ -1,21 +1,19 @@
-**cbench** is a microbenchmark tool for CPU & GPU using maths operations [BLAS](https://www.netlib.org/blas/) and scores
-in terms of FLOPS or GFLOPS, for `matmul` its approx to ~ `2 * N^3` ops/time
+**cbench** is a microbenchmark tool for CPU & GPU, performs a series of maths
+computation [BLAS](https://www.netlib.org/blas/) and scores in terms of FLOPS or GFLOPS
 
 ```shell
 cbench run --runs 5 --warmups 2 --max-threads 12
 Warmup runs: 2, Benchmark runs: 5, Threads: 12
-Run 1: Time = 23.205s, GFLOPS = 8.88
-Run 2: Time = 21.855s, GFLOPS = 9.43
-Run 3: Time = 21.272s, GFLOPS = 9.69
-Run 4: Time = 21.025s, GFLOPS = 9.81
-Run 5: Time = 21.001s, GFLOPS = 9.82
+Run 1: Time = 1.331s, GFLOPS = 154.87
+Run 2: Time = 1.369s, GFLOPS = 150.53
+Run 3: Time = 1.291s, GFLOPS = 159.62
+Run 4: Time = 1.365s, GFLOPS = 150.98
+Run 5: Time = 1.379s, GFLOPS = 149.50
 -------------------------------------
-Average GFLOPS score: 9.53
-Total time: 1.8059822min
+Average GFLOPS score: 153.10
+Total time: 6.7351074s
 Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
-
-> NEED HELP WITH [BLAS](./src/load.rs), getting memory Bottlenecks
 
 ref
 

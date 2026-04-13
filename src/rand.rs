@@ -4,7 +4,7 @@ use rayon::iter::ParallelIterator;
 
 /// Generates a random matrix of given dimensions with values in range `[-1.0, 1.0]`
 #[inline]
-pub fn gen_mat(col: usize, rows: usize, pool: &ThreadPool) -> Vec<f64> {
+pub fn gen_mat(rows: usize, col: usize, pool: &ThreadPool) -> Vec<f64> {
     if col == 0 || rows == 0 {
         panic!("Matrix dimensions must be greater than zero");
     }
