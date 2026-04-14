@@ -185,6 +185,7 @@ pub fn gemv_into(
             {
                 let idx0 = strt0.checked_add(k).and_then(|v| v.checked_add(48));
                 unsafe {
+                    // _mm_prefetch instruction is safe to execute on any pointer.
                     if let Some(idx0) = idx0 {
                         core::arch::x86_64::_mm_prefetch(
                             matrix.as_ptr().add(idx0) as *const i8,
@@ -388,8 +389,11 @@ pub fn gemm_into(
 
                         let mut t = k;
                         while t + offset <= k_max {
+                            // t + 8 <= k_max <= cols_a, so we are within bounds of a_row and b_t
+                            // We use read_unaligned since pointers might not be aligned to 64 bytes.
                             unsafe {
                                 // Pull 8 elements from the current row of A
+                                // Slice a_row has length cols_a, so a_ptr.add(t) is valid.
                                 let va_ptr = a_ptr.add(t);
                                 let va = f64x8::from(read_unaligned(va_ptr as *const [f64; 8]));
 
@@ -413,19 +417,30 @@ pub fn gemm_into(
                         }
 
                         let base = row * cols_b + col;
-                        result[base] += from_f64x8(sum0);
-                        result[base + 1] += from_f64x8(sum1);
-                        result[base + 2] += from_f64x8(sum2);
-                        result[base + 3] += from_f64x8(sum3);
+                        let mut r0 = from_f64x8(sum0);
+                        let mut r1 = from_f64x8(sum1);
+                        let mut r2 = from_f64x8(sum2);
+                        let mut r3 = from_f64x8(sum3);
 
                         // Handle leftovers
-                        for t in t..k_max {
-                            //TODO: Double result access, bad if result does not fit in cache
-                            let a_val = a_row[t];
-                            result[base] += a_val * b_t[b0_strt + t];
-                            result[base + 1] += a_val * b_t[b1_strt + t];
-                            result[base + 2] += a_val * b_t[b2_strt + t];
-                            result[base + 3] += a_val * b_t[b3_strt + t];
+                        for lf in t..k_max {
+                            // lf < k_max <= cols_a, which is checked at start
+                            unsafe {
+                                let a_val = *a_ptr.add(lf);
+                                r0 += a_val * *b_ptr.add(b0_strt + lf);
+                                r1 += a_val * *b_ptr.add(b1_strt + lf);
+                                r2 += a_val * *b_ptr.add(b2_strt + lf);
+                                r3 += a_val * *b_ptr.add(b3_strt + lf);
+                            }
+                        }
+
+                        // Accumulate back to result buffer only once (avoids double memory access overhead)
+                        unsafe {
+                            let res_ptr = result.as_mut_ptr().add(base);
+                            *res_ptr += r0;
+                            *res_ptr.add(1) += r1;
+                            *res_ptr.add(2) += r2;
+                            *res_ptr.add(3) += r3;
                         }
                     }
 
