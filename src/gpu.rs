@@ -26,7 +26,7 @@ pub async fn get_gpu_adapter(instance: Instance) -> Result<Adapter> {
 }
 
 /// This is my 'hello world' version of gpu programming
-/// This just add two vector parallelly
+/// This just mul two vector parallelly
 #[tokio::test]
 async fn test_gpu() -> Result<()> {
     use crate::rand::gen_fill;
@@ -39,13 +39,13 @@ async fn test_gpu() -> Result<()> {
     let adapter = get_gpu_adapter(inst).await?;
     let shader_wgsl = wgpu::include_wgsl!("../shaders/test.wgsl");
 
-    println!("\nSelected Adapter: {}", adapter.get_info().name);
+    println!("Selected Adapter: {}", adapter.get_info().name);
     let (device, queue) = adapter.request_device(&DeviceDescriptor::default()).await?;
 
     let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
 
-    let mut data_a = vec![0.0f32; 4096];
-    let mut data_b = vec![0.0f32; 4096];
+    let mut data_a = vec![0.0f32; 1024 * 1024 * 32];
+    let mut data_b = vec![0.0f32; 1024 * 1024 * 32];
 
     // Fill buffer with random SHIT
     gen_fill(&mut data_a, &pool);
@@ -154,7 +154,7 @@ async fn test_gpu() -> Result<()> {
         label: Some("Pipeline"),
         layout: Some(&pipeline_layout),
         module: &shader,
-        entry_point: Some("main"),
+        entry_point: Some("add"),
         compilation_options: Default::default(),
         cache: None,
     });
@@ -173,12 +173,13 @@ async fn test_gpu() -> Result<()> {
         // Bind the input buffer to the compute shader
         compute_pass.set_bind_group(0, &bind_group, &[]);
 
-        let workgroup_size = 256;
+        let wg_size = 256;
+        let max_wg_per_dim = device.limits().max_compute_workgroups_per_dimension;
         // Calculate the number of workgroups needed to process the entire input buffer
-        let num_workgroups = (data_a.len() as u32).div_ceil(workgroup_size);
+        let num_wg = (data_a.len() as u32).div_ceil(wg_size).min(max_wg_per_dim);
 
-        // Dispatch the compute shader with the calculated number of workgroups in one dim
-        compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
+        // Dispatch the compute shader
+        compute_pass.dispatch_workgroups(num_wg, 1, 1);
     }
 
     // Copy from DEVICE to HOST for reading
