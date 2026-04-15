@@ -22,6 +22,7 @@ ref
 
 - https://docs.rs/rayon/latest/rayon/index.html
 - https://docs.rs/rayon-core/1.13.0/rayon_core/
+- https://docs.rs/wgpu/latest/wgpu/index.html
 - https://doc.rust-lang.org/std/simd/
 - https://www.netlib.org/blas/
 - https://www.netlib.org/benchmark/whetstone.c

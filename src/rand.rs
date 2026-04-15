@@ -60,3 +60,48 @@ pub fn gen_fill(buf: &mut [f32], pool: &ThreadPool) {
 pub fn get_bytes(size: u32) -> Vec<u8> {
     (0..size).map(|_| fastrand::u8(..)).collect()
 }
+
+#[test]
+#[ignore]
+fn test_thread_gen() {
+    use crate::rand::gen_mat;
+    use rayon::ThreadPoolBuilder;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let dim = 2048;
+
+    let thread_1 = std::thread::available_parallelism()
+        .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
+        .get();
+    let pool_1 = ThreadPoolBuilder::new()
+        .num_threads(thread_1)
+        .build()
+        .unwrap();
+
+    let start_1 = Instant::now();
+    let exec_1 = gen_mat(dim, dim, &pool_1);
+    let elapsed_1 = start_1.elapsed();
+
+    black_box(exec_1); // Prevent compiler from optimizing away the result
+    drop(pool_1); // Explicitly drop the thread pool to free resources before the next test
+
+    let thread_2 = 1;
+    let pool_2 = ThreadPoolBuilder::new()
+        .num_threads(thread_2)
+        .build()
+        .unwrap();
+
+    let start_2 = Instant::now();
+    let exec_2 = gen_mat(dim, dim, &pool_2);
+    let elapsed_2 = start_2.elapsed();
+
+    black_box(exec_2);
+    drop(pool_2);
+
+    println!("Generated {}x{} matrix", dim, dim);
+    println!("Time with {} threads: {:?}", thread_1, elapsed_1);
+    println!("Time with {} thread: {:?}", thread_2, elapsed_2);
+
+    assert!(elapsed_1 < elapsed_2);
+}
