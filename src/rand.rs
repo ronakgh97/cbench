@@ -45,12 +45,12 @@ pub fn gen_vec(num: usize, dim: usize, pool: Option<&ThreadPool>) -> Vec<Vec<f64
     }
 }
 
-/// Fills an existing buffer with random values in range `[-1.0, 1.0]`
+/// Fills an existing f32 buffer with random values in range `[-1.0, 1.0]`
 #[inline]
-pub fn gen_fill(buf: &mut [f64], pool: &ThreadPool) {
+pub fn gen_fill(buf: &mut [f32], pool: &ThreadPool) {
     pool.install(|| {
         buf.par_iter_mut().for_each(|x| {
-            *x = fastrand::f64() * 2.0 - 1.0;
+            *x = fastrand::f32() * 2.0 - 1.0;
         });
     });
 }

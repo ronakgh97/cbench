@@ -1,16 +1,22 @@
 use crate::load::gemm_into;
 use crate::rand::gen_mat;
+use anyhow::Context;
 use rayon::prelude::*;
 use std::hint::black_box;
 use std::time::Instant;
 // TODO: Random generation are pain and should consider inside bench loop, Need better scoring
 // TODO: Currently this runs matmul on given threads, and compute `flops` * thread_num,
 //  but I think we should parallelize matmul computation internally and fix the flops calculation....not run them in each threads?
-//  so it can count as single matmul kernel efficiency, not System thread scheduling efficiency, which is not what we want to measure.
+//  so it can count as single matmul kernel efficiency, not system thread scheduling efficiency, which is not what we want to measure.
 
-const SAMPLE_SIZE: usize = 2048;
+const SAMPLE_SIZE: usize = 2148;
 
-pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> anyhow::Result<()> {
+pub async fn run_benchmark(
+    runs: Option<usize>,
+    warmups: Option<usize>,
+    max_thread: usize,
+) -> anyhow::Result<()> {
+    let runs = runs.unwrap_or(6);
     let warmup_runs = warmups.unwrap_or(2);
 
     println!(
@@ -18,9 +24,21 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
         warmup_runs, runs, max_thread
     );
 
-    let thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(max_thread)
-        .build()?;
+    let thread_pool = std::sync::Arc::new(tokio::sync::RwLock::new(Some(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(max_thread)
+            .build()?,
+    )));
+
+    let pool_clone = thread_pool.clone();
+    tokio::spawn(async move {
+        ctrl_c().await;
+        if let Some(pool) = pool_clone.write().await.take() {
+            println!("Stopping...");
+            drop(pool);
+        }
+        std::process::exit(0);
+    });
 
     let mat_len = SAMPLE_SIZE * SAMPLE_SIZE;
     let mut buf_result = vec![0.0f64; mat_len];
@@ -28,8 +46,12 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
 
     // Warmup phase (single-thread)
     {
-        let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-        let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
+        let pool_guard = thread_pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .with_context(|| "Cannot acquire read lock on thread pool")?;
+        let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
+        let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
 
         for _ in 0..warmup_runs {
             gemm_into(
@@ -49,15 +71,19 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     // Generate new matrics
     let mut matrix_vec = Vec::with_capacity(runs);
     for _ in 0..runs {
+        let pool_guard = thread_pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .with_context(|| "Cannot acquire read lock on thread pool")?;
         if max_thread == 1 {
-            let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
-            let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool);
+            let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
+            let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
             matrix_vec.push((matrix_a, matrix_b));
         } else {
-            let (matrix_a, matrix_b) = thread_pool.install(|| {
+            let (matrix_a, matrix_b) = pool.install(|| {
                 rayon::join(
-                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool),
-                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, &thread_pool),
+                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool),
+                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool),
                 )
             });
             matrix_vec.push((matrix_a, matrix_b));
@@ -81,7 +107,9 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
             );
             black_box(&buf_result);
         } else {
-            thread_pool.install(|| {
+            let pool_guard = thread_pool.read().await;
+            let pool = pool_guard.as_ref().unwrap();
+            pool.install(|| {
                 (0..max_thread).into_par_iter().for_each(|_| {
                     let mut res = vec![0.0f64; mat_len];
                     let mut bt = vec![0.0f64; mat_len];
@@ -118,10 +146,34 @@ pub fn run_benchmark(runs: usize, warmups: Option<usize>, max_thread: usize) -> 
     println!("-------------------------------------");
     let avg_gflops = score.iter().map(|s| s.1).sum::<f64>() / (score.len() as f64);
     let total_time = score.iter().map(|s| s.0).sum::<f64>();
-    println!("Average GFLOPS score: {:.2}", avg_gflops);
+    println!("Average GFLOPS/core: {:.2}", avg_gflops / max_thread as f64);
     println!("Total time: {}s", total_time as f32);
 
     println!("Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php");
 
     Ok(())
+}
+
+async fn ctrl_c() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed Ctrl+C handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

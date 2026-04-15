@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cbench",
     version = "1.0.0-theta",
-    about = "BLAS based cpu micro-benching tool"
+    about = "BLAS based cpu & gpu micro-benching tool"
 )]
 struct CliArgs {
     #[command(subcommand)]
@@ -16,7 +16,7 @@ enum Command {
     Run {
         /// Number of runs to perform (default: 12)
         #[arg(short, long)]
-        runs: usize,
+        runs: Option<usize>,
 
         /// Number of warmup runs before benchmarking (default: 2)
         #[arg(short, long)]
@@ -28,7 +28,8 @@ enum Command {
     },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     use cbench::prelude::*;
     let args = CliArgs::parse();
 
@@ -44,7 +45,7 @@ fn main() -> anyhow::Result<()> {
 
             let thread_num = max_threads.unwrap_or(available);
 
-            run_benchmark(runs, warmups, thread_num)?;
+            run_benchmark(runs, warmups, thread_num).await?;
         }
         None => {
             print_none();

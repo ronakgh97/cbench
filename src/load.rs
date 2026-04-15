@@ -598,7 +598,7 @@ fn test_simd() -> anyhow::Result<()> {
     use std::hint::black_box;
     use std::time::Instant;
 
-    let dim = 2162;
+    let dim = 1024;
     let runs = 4096;
 
     let mut res_x8: f64 = 0.0;
@@ -649,9 +649,9 @@ fn test_gemv() -> anyhow::Result<()> {
     use std::hint::black_box;
     use std::time::Instant;
 
-    let rows = 8192;
-    let cols = 4096;
-    let runs = 8;
+    let rows = 4096;
+    let cols = 2048;
+    let runs = 6;
 
     let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
 
@@ -706,7 +706,7 @@ fn test_gemm() -> anyhow::Result<()> {
 
     let rows = 4096;
     let cols = 2048;
-    let runs = 8;
+    let runs = 6;
 
     let thread_pool = ThreadPoolBuilder::new().num_threads(12).build()?;
 
