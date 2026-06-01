@@ -1,6 +1,6 @@
 [package]
 name = "cbench"
-version = "0.1.0"
+version = "1.0.0-alpha"
 edition = "2024"
 
 [[bin]]
@@ -23,10 +23,12 @@ debug = true
 incremental = true
 
 [dependencies]
-clap = { version = "4.6.0", features = ["derive"] }
-fastrand = "2.4.1"
+tokio = { version = "1.52.3", features = ["full"] }
+clap = { version = "4.6.1", features = ["derive"] }
+blas_rs = { path = "blas-rs" } # local dependency on my `blas_rs` crate
+# rayon = "1.12.0"
+# aes-gcm = "0.11.0-rc.4"
+# sha3 = "0.12.0"
+# rand = "0.10.1"
 anyhow = "1.0.102"
-tokio = { version = "1.52.0", features = ["full"] } # we need this for GPU benchmarking since wgpu is async
-rayon = "1.12.0"# this deps will be replaced with my manual thread pool implementation in the future
-wide = "1.3.0" # this deps will be replaced with rust std unsafe SIMD in the future
-wgpu = "29.0.1" # graphics API for GPU benchmarking
+# wgpu = "29.0.3" # graphics API for GPU benchmarking

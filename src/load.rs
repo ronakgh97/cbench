@@ -227,7 +227,6 @@ async fn test_mem_pool() -> anyhow::Result<()> {
             e += 1;
         }
     }
-
     println!("Failed alloc: {}, Successful alloc: {}", e, s);
 
     Ok(())
@@ -252,11 +251,8 @@ async fn test_mem_pool_capacity() -> anyhow::Result<()> {
         handles.push(tokio::task::spawn_blocking(move || {
             if let Some(_a) = pool.try_alloc_zeroed() {
                 let live = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
-
                 PEAK.fetch_max(live, Ordering::SeqCst);
-
                 std::thread::sleep(std::time::Duration::from_millis(5));
-
                 LIVE.fetch_sub(1, Ordering::SeqCst);
             }
         }));
@@ -269,7 +265,6 @@ async fn test_mem_pool_capacity() -> anyhow::Result<()> {
     let peak = PEAK.load(Ordering::SeqCst);
 
     println!("Peak live allocations = {}", peak);
-
     assert!(peak <= 32);
 
     Ok(())
@@ -299,14 +294,11 @@ async fn test_mem_pool_max_two_block_owners() -> anyhow::Result<()> {
 
             if block_1.is_some() && block_2.is_some() {
                 success.fetch_add(1, Ordering::SeqCst);
-
                 // hold both blocks until everyone has attempted allocation.
                 barrier.wait();
-
                 true
             } else {
                 barrier.wait();
-
                 false
             }
         }));
@@ -317,9 +309,7 @@ async fn test_mem_pool_max_two_block_owners() -> anyhow::Result<()> {
     }
 
     let successes = success.load(Ordering::SeqCst);
-
     println!("Successful two-block owners = {}", successes);
-
     assert_eq!(successes, 16);
 
     Ok(())
@@ -342,10 +332,8 @@ async fn test_mem_pool_stress() -> anyhow::Result<()> {
                     if let Some(b) = pool.try_alloc_zeroed() {
                         break b;
                     }
-
                     std::hint::spin_loop();
                 };
-
                 block[0] += 1.0;
                 block[1] += 2.0;
                 block[2] += 3.0;

@@ -1,93 +1,67 @@
-use crate::load::gemm_into;
-use crate::rand::gen_mat;
+use crate::load::StaticMemPool;
 use anyhow::Context;
-use rayon::prelude::*;
+use blas_rs::lvl3::gemm;
+use blas_rs::utils::gen_fill;
 use std::hint::black_box;
+use std::sync::Arc;
 use std::time::Instant;
-// TODO: Random generation are pain and should consider inside bench loop, Need better scoring
-// TODO: Currently this runs matmul on given threads, and compute `flops` * thread_num,
-//  but I think we should parallelize matmul computation internally and fix the flops calculation....not run them in each threads?
-//  so it can count as single matmul kernel efficiency, not system thread scheduling efficiency, which is not what we want to measure.
 
-const SAMPLE_SIZE: usize = 2148;
+pub const SAMPLE_SIZE: usize = 2156;
 
-pub async fn run_benchmark(
-    runs: Option<usize>,
-    warmups: Option<usize>,
-    max_thread: usize,
-) -> anyhow::Result<()> {
-    let runs = runs.unwrap_or(6);
-    let warmup_runs = warmups.unwrap_or(2);
-
+pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> anyhow::Result<()> {
     println!(
         "Warmup runs: {}, Benchmark runs: {}, Threads: {}",
-        warmup_runs, runs, max_thread
+        warmups, runs, max_thread
     );
 
-    let thread_pool = std::sync::Arc::new(tokio::sync::RwLock::new(Some(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(max_thread)
-            .build()?,
-    )));
+    let mem_pool = Arc::new(StaticMemPool::<[f32; SAMPLE_SIZE * SAMPLE_SIZE], 16>::init());
 
-    let pool_clone = thread_pool.clone();
+    let pool_clone = mem_pool.clone();
     tokio::spawn(async move {
         ctrl_c().await;
-        if let Some(pool) = pool_clone.write().await.take() {
-            println!("Stopping...");
-            drop(pool);
-        }
+        println!("Stopping...");
+        drop(pool_clone);
         std::process::exit(0);
     });
 
     let mat_len = SAMPLE_SIZE * SAMPLE_SIZE;
-    let mut buf_result = vec![0.0f64; mat_len];
-    let mut buf_b_t = vec![0.0f64; mat_len];
 
-    // Warmup phase (single-thread)
+    // warmup phase (single-thread)
     {
-        let pool_guard = thread_pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .with_context(|| "Cannot acquire read lock on thread pool")?;
-        let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
-        let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
+        let mut block_a = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+        let mut block_b = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+        gen_fill(&mut *block_a);
+        gen_fill(&mut *block_b);
 
-        for _ in 0..warmup_runs {
-            gemm_into(
-                &matrix_a,
-                &matrix_b,
+        for _ in 0..warmups {
+            let mut block_c = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+            gemm(
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
+                1.0,
+                &*block_a,
                 SAMPLE_SIZE,
-                &mut buf_b_t,
-                &mut buf_result,
+                &*block_b,
+                SAMPLE_SIZE,
+                0.0,
+                &mut *block_c,
+                SAMPLE_SIZE,
+                false,
+                false,
             );
-            black_box(&buf_result);
+            black_box(&*block_c);
         }
     }
 
-    // Generate new matrics
+    // generate new matrices
     let mut matrix_vec = Vec::with_capacity(runs);
     for _ in 0..runs {
-        let pool_guard = thread_pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .with_context(|| "Cannot acquire read lock on thread pool")?;
-        if max_thread == 1 {
-            let matrix_a = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
-            let matrix_b = gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool);
-            matrix_vec.push((matrix_a, matrix_b));
-        } else {
-            let (matrix_a, matrix_b) = pool.install(|| {
-                rayon::join(
-                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool),
-                    || gen_mat(SAMPLE_SIZE, SAMPLE_SIZE, pool),
-                )
-            });
-            matrix_vec.push((matrix_a, matrix_b));
-        }
+        let mut block_a = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+        let mut block_b = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+        gen_fill(&mut *block_a);
+        gen_fill(&mut *block_b);
+        matrix_vec.push((block_a, block_b));
     }
 
     let mut score: Vec<(f64, f64)> = vec![(0.0, 0.0); runs];
@@ -95,36 +69,47 @@ pub async fn run_benchmark(
     for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
-            gemm_into(
-                &matrics.0,
-                &matrics.1,
+            let mut block_c = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
+            gemm(
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
+                1.0,
+                &*matrics.0,
                 SAMPLE_SIZE,
-                &mut buf_b_t,
-                &mut buf_result,
+                &*matrics.1,
+                SAMPLE_SIZE,
+                0.0,
+                &mut *block_c,
+                SAMPLE_SIZE,
+                false,
+                false,
             );
-            black_box(&buf_result);
+            black_box(&*block_c);
         } else {
-            let pool_guard = thread_pool.read().await;
-            let pool = pool_guard.as_ref().unwrap();
-            pool.install(|| {
-                (0..max_thread).into_par_iter().for_each(|_| {
-                    let mut res = vec![0.0f64; mat_len];
-                    let mut bt = vec![0.0f64; mat_len];
-                    gemm_into(
-                        &matrics.0,
-                        &matrics.1,
-                        SAMPLE_SIZE,
-                        SAMPLE_SIZE,
-                        SAMPLE_SIZE,
-                        SAMPLE_SIZE,
-                        &mut bt,
-                        &mut res,
-                    );
-                    black_box(res);
-                });
+            let mut scratch: Vec<Vec<f32>> =
+                (0..max_thread).map(|_| vec![0.0f32; mat_len]).collect();
+            std::thread::scope(|s| {
+                for res in &mut scratch {
+                    s.spawn(|| {
+                        gemm(
+                            SAMPLE_SIZE,
+                            SAMPLE_SIZE,
+                            SAMPLE_SIZE,
+                            1.0,
+                            &*matrics.0,
+                            SAMPLE_SIZE,
+                            &*matrics.1,
+                            SAMPLE_SIZE,
+                            0.0,
+                            res,
+                            SAMPLE_SIZE,
+                            false,
+                            false,
+                        );
+                        black_box(&*res);
+                    });
+                }
             });
         }
         let elapsed = start.elapsed().as_secs_f64();
