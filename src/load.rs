@@ -1,15 +1,17 @@
+use aes_gcm::{AeadInOut, Aes256Gcm, KeyInit, Nonce, Tag};
+use anyhow::Result;
 use core::array::from_fn;
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
+use rand::Rng;
 
 /// A tiny fixed-size general purpose lock-free memory pool for type `T`.
 /// Allocation atomically claims a free slot and returns a [`Block`].
 /// Dropping the [`Block`] destroys the contained value and returns the
 /// slot to the pool.
 ///
-/// Unsafety
 /// For free\[i\] == true
 /// - the slot is available for allocation
 /// - the contents of `data[i]` are unspecified or uninitialized, and must not be read until allocated
@@ -131,7 +133,6 @@ impl<T, const N: usize> StaticMemPool<T, N> {
             if flag.swap(false, Ordering::AcqRel) {
                 // get a raw pointer to the memory inside the pool
                 let ptr = self.data[index].get().cast::<T>();
-
                 // write zeroes directly into that memory (like memset)
                 unsafe { core::ptr::write_bytes(ptr, 0u8, 1) };
                 return Some(Block { pool: self, index });
@@ -160,7 +161,6 @@ impl<T, const N: usize> Block<'_, T, N> {
 
 impl<T, const N: usize> Deref for Block<'_, T, N> {
     type Target = T;
-
     fn deref(&self) -> &Self::Target {
         self.get()
     }
@@ -185,165 +185,65 @@ impl<T, const N: usize> Drop for Block<'_, T, N> {
     }
 }
 
-#[tokio::test]
-async fn test_mem_pool() -> anyhow::Result<()> {
-    use blas_rs::lvl1::dot_unsafe;
-    use blas_rs::utils::gen_fill;
-    use std::sync::Arc;
+pub const NONCE_LEN: usize = 12;
+pub const TAG_LEN: usize = 16;
 
-    let mem_pool = Arc::new(StaticMemPool::<[f32; 4096], 32>::init());
+#[inline(always)]
+pub fn encrypt_buf(input: &[u8], output: &mut [u8], key: &[u8; 32]) -> Result<usize> {
+    let plaintext_len = input.len();
 
-    let mut handles = vec![];
-    for _ in 0..32 {
-        let mem_pool = mem_pool.clone();
-        handles.push(tokio::task::spawn_blocking(move || {
-            if let Some(mut block_1) = mem_pool.try_alloc_zeroed() {
-                if let Some(mut block_2) = mem_pool.try_alloc_zeroed() {
-                    let x_buf: &mut [f32; 4096] = &mut block_1;
-                    gen_fill(x_buf);
-                    let y_buf: &mut [f32; 4096] = &mut block_2;
-                    gen_fill(y_buf);
-
-                    let result = unsafe { dot_unsafe(4096, x_buf, 1, y_buf, 1) };
-                    println!("Got both blocks, dot: {}", result);
-                    true
-                } else {
-                    println!("Failed to get block 2");
-                    false
-                }
-            } else {
-                println!("Failed to get block 1");
-                false
-            }
-        }));
+    if output.len() < NONCE_LEN + plaintext_len + TAG_LEN {
+        anyhow::bail!(
+            "Output buffer too small, need at least {} bytes",
+            NONCE_LEN + plaintext_len + TAG_LEN
+        );
     }
 
-    let mut s = 0;
-    let mut e = 0;
-    for handle in handles {
-        if handle.await? {
-            s += 1;
-        } else {
-            e += 1;
-        }
-    }
-    println!("Failed alloc: {}, Successful alloc: {}", e, s);
+    let (nonce_buf, data_tag) = output.split_at_mut(NONCE_LEN);
+    let (data, tag_buf) = data_tag.split_at_mut(plaintext_len);
 
-    Ok(())
+    // fill nonce fresh
+    rand::rng().fill_bytes(nonce_buf);
+    // copy plaintext
+    data.copy_from_slice(input);
+
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Nonce::try_from(&*nonce_buf)?;
+
+    let auth_tag = cipher
+        .encrypt_inout_detached(&nonce, b"", data.into())
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    tag_buf.copy_from_slice(&auth_tag);
+
+    Ok(NONCE_LEN + plaintext_len + TAG_LEN)
 }
 
-#[tokio::test]
-async fn test_mem_pool_capacity() -> anyhow::Result<()> {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    let pool = Arc::new(StaticMemPool::<[f32; 4096], 32>::init());
-    static LIVE: AtomicUsize = AtomicUsize::new(0);
-    static PEAK: AtomicUsize = AtomicUsize::new(0);
-
-    let mut handles = Vec::new();
-
-    for _ in 0..512 {
-        let pool = pool.clone();
-
-        handles.push(tokio::task::spawn_blocking(move || {
-            if let Some(_a) = pool.try_alloc_zeroed() {
-                let live = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
-                PEAK.fetch_max(live, Ordering::SeqCst);
-                std::thread::sleep(std::time::Duration::from_millis(5));
-                LIVE.fetch_sub(1, Ordering::SeqCst);
-            }
-        }));
+#[inline(always)]
+pub fn decrypt_buf(input: &[u8], output: &mut [u8], key: &[u8; 32]) -> Result<usize> {
+    if input.len() < NONCE_LEN + TAG_LEN {
+        anyhow::bail!("Ciphertext too short");
     }
+    let ciphertext_len = input.len() - NONCE_LEN - TAG_LEN;
 
-    for handle in handles {
-        handle.await?;
+    if output.len() < ciphertext_len {
+        anyhow::bail!(
+            "Output buffer too small, need at least {} bytes",
+            ciphertext_len
+        );
     }
+    let cipher = Aes256Gcm::new(key.into());
 
-    let peak = PEAK.load(Ordering::SeqCst);
+    // extract nonce & tag
+    let nonce = Nonce::try_from(&input[..NONCE_LEN])?;
+    let tag = Tag::try_from(&input[NONCE_LEN + ciphertext_len..])?;
+    // ciphertext region only
+    let data = &mut output[..ciphertext_len];
+    data.copy_from_slice(&input[NONCE_LEN..NONCE_LEN + ciphertext_len]);
 
-    println!("Peak live allocations = {}", peak);
-    assert!(peak <= 32);
+    cipher
+        .decrypt_inout_detached(&nonce, b"", data.into(), &tag)
+        .map_err(|e| anyhow::anyhow!(e))?;
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_mem_pool_max_two_block_owners() -> anyhow::Result<()> {
-    use std::sync::{
-        Arc, Barrier,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    let pool = Arc::new(StaticMemPool::<[f32; 4096], 32>::init());
-    let success = Arc::new(AtomicUsize::new(0));
-    let barrier = Arc::new(Barrier::new(32));
-
-    let mut handles = Vec::new();
-
-    for _ in 0..32 {
-        let pool = pool.clone();
-        let success = success.clone();
-        let barrier = barrier.clone();
-
-        handles.push(tokio::task::spawn_blocking(move || {
-            let block_1 = pool.try_alloc_zeroed();
-            let block_2 = pool.try_alloc_zeroed();
-
-            if block_1.is_some() && block_2.is_some() {
-                success.fetch_add(1, Ordering::SeqCst);
-                // hold both blocks until everyone has attempted allocation.
-                barrier.wait();
-                true
-            } else {
-                barrier.wait();
-                false
-            }
-        }));
-    }
-
-    for handle in handles {
-        handle.await?;
-    }
-
-    let successes = success.load(Ordering::SeqCst);
-    println!("Successful two-block owners = {}", successes);
-    assert_eq!(successes, 16);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_mem_pool_stress() -> anyhow::Result<()> {
-    use std::sync::Arc;
-
-    let pool = Arc::new(StaticMemPool::<[f32; 256], 32>::init());
-
-    let mut handles = Vec::new();
-
-    for _ in 0..64 {
-        let pool = pool.clone();
-
-        handles.push(tokio::task::spawn_blocking(move || {
-            for _ in 0..128_000 {
-                let mut block = loop {
-                    if let Some(b) = pool.try_alloc_zeroed() {
-                        break b;
-                    }
-                    std::hint::spin_loop();
-                };
-                block[0] += 1.0;
-                block[1] += 2.0;
-                block[2] += 3.0;
-            }
-        }));
-    }
-
-    for handle in handles {
-        handle.await?;
-    }
-
-    Ok(())
+    Ok(ciphertext_len)
 }

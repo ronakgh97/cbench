@@ -2,19 +2,22 @@
 performs a series of random maths computation (blas/crypto/pi) and scores in terms of GFLOPS & meaningful metrics
 
 ```shell
-cbench run --runs 8 --warmups 3 --max-threads 12
-Warmup runs: 3 Benchmark runs: 8 Threads: 12
-Run 1: Time = 0.854s GFLOPS = 281.63
-Run 2: Time = 0.908s GFLOPS = 264.81
-Run 3: Time = 0.927s GFLOPS = 259.32
-Run 4: Time = 0.837s GFLOPS = 287.31
-Run 5: Time = 0.872s GFLOPS = 275.81
-Run 6: Time = 0.890s GFLOPS = 270.33
-Run 7: Time = 0.925s GFLOPS = 260.02                                                                                                                                   
-Run 8: Time = 0.863s GFLOPS = 278.53
+cbench run --runs 8 --warmups 3 --max-threads 18
+Warmup runs: 3 Benchmark runs: 8 Threads: 18
+
+Running BLAS bench...
+Run 1: Time = 1.293s GFLOPS = 279.03
+Run 2: Time = 1.275s GFLOPS = 282.85
+Run 3: Time = 1.287s GFLOPS = 280.33
+Run 4: Time = 1.254s GFLOPS = 287.75
+Run 5: Time = 1.233s GFLOPS = 292.44
+Run 6: Time = 1.258s GFLOPS = 286.76
+Run 7: Time = 1.295s GFLOPS = 278.54
+Run 8: Time = 1.261s GFLOPS = 286.09
 -------------------------------------
-Average GFLOPS/core: 22.68
-Total time: 7.0757966s
+Estimated CPU Score: 2564
+Average GFLOPS/core: 15.79
+Total time: 10.155198s
 Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
 

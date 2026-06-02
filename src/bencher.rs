@@ -1,21 +1,23 @@
 use crate::load::StaticMemPool;
 use anyhow::Context;
 use blas_rs::lvl3::gemm;
-use blas_rs::utils::gen_fill;
+use blas_rs::utils::Noise;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Instant;
 
+const BASE_SCORE: usize = 1280;
 pub const SAMPLE_SIZE: usize = 2156;
 
 pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> anyhow::Result<()> {
     println!(
-        "Warmup runs: {}, Benchmark runs: {}, Threads: {}",
+        "Warmup runs: {} Benchmark runs: {} Threads: {}\n",
         warmups, runs, max_thread
     );
+    println!("Running BLAS bench...");
 
-    let mem_pool = Arc::new(StaticMemPool::<[f32; SAMPLE_SIZE * SAMPLE_SIZE], 16>::init());
-
+    let mem_pool = Arc::new(StaticMemPool::<[f32; SAMPLE_SIZE * SAMPLE_SIZE], 64>::init());
+    let mut noise = Noise::init();
     let pool_clone = mem_pool.clone();
     tokio::spawn(async move {
         ctrl_c().await;
@@ -24,14 +26,12 @@ pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> an
         std::process::exit(0);
     });
 
-    let mat_len = SAMPLE_SIZE * SAMPLE_SIZE;
-
     // warmup phase (single-thread)
     {
         let mut block_a = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
         let mut block_b = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
-        gen_fill(&mut *block_a);
-        gen_fill(&mut *block_b);
+        noise.fill_f32(&mut *block_a);
+        noise.fill_f32(&mut *block_b);
 
         for _ in 0..warmups {
             let mut block_c = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
@@ -54,19 +54,15 @@ pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> an
         }
     }
 
-    // generate new matrices
-    let mut matrix_vec = Vec::with_capacity(runs);
-    for _ in 0..runs {
+    let mut score = vec![(0.0f64, 0.0f64); runs];
+
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..runs {
         let mut block_a = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
         let mut block_b = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
-        gen_fill(&mut *block_a);
-        gen_fill(&mut *block_b);
-        matrix_vec.push((block_a, block_b));
-    }
+        noise.fill_f32(&mut *block_a);
+        noise.fill_f32(&mut *block_b);
 
-    let mut score: Vec<(f64, f64)> = vec![(0.0, 0.0); runs];
-
-    for (i, matrics) in matrix_vec.iter().enumerate().take(runs) {
         let start = Instant::now();
         if max_thread == 1 {
             let mut block_c = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
@@ -75,9 +71,9 @@ pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> an
                 SAMPLE_SIZE,
                 SAMPLE_SIZE,
                 1.0,
-                &*matrics.0,
+                &*block_a,
                 SAMPLE_SIZE,
-                &*matrics.1,
+                &*block_b,
                 SAMPLE_SIZE,
                 0.0,
                 &mut *block_c,
@@ -87,27 +83,30 @@ pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> an
             );
             black_box(&*block_c);
         } else {
-            let mut scratch: Vec<Vec<f32>> =
-                (0..max_thread).map(|_| vec![0.0f32; mat_len]).collect();
             std::thread::scope(|s| {
-                for res in &mut scratch {
-                    s.spawn(|| {
+                let a_ref: &[f32] = block_a.get();
+                let b_ref: &[f32] = block_b.get();
+                for _ in 0..max_thread {
+                    let mut block = mem_pool
+                        .try_alloc_zeroed()
+                        .expect("Pool exhausted during thread allocation");
+                    s.spawn(move || {
                         gemm(
                             SAMPLE_SIZE,
                             SAMPLE_SIZE,
                             SAMPLE_SIZE,
                             1.0,
-                            &*matrics.0,
+                            a_ref,
                             SAMPLE_SIZE,
-                            &*matrics.1,
+                            b_ref,
                             SAMPLE_SIZE,
                             0.0,
-                            res,
+                            block.get_mut(),
                             SAMPLE_SIZE,
                             false,
                             false,
                         );
-                        black_box(&*res);
+                        black_box(block.get());
                     });
                 }
             });
@@ -121,16 +120,20 @@ pub async fn run_benchmark(runs: usize, warmups: usize, max_thread: usize) -> an
         score[i] = (elapsed, gflops);
 
         println!(
-            "Run {}: Time = {:.3?}s, GFLOPS = {:.2}",
+            "Run {}: Time = {:.3?}s GFLOPS = {:.2}",
             i + 1,
             elapsed,
             gflops
         );
     }
 
+    // TODO: run crypto here
+
     println!("-------------------------------------");
-    let avg_gflops = score.iter().map(|s| s.1).sum::<f64>() / (score.len() as f64);
-    let total_time = score.iter().map(|s| s.0).sum::<f64>();
+    let avg_gflops = score[..runs].iter().map(|s| s.1).sum::<f64>() / (runs as f64);
+    let total_time = score[..runs].iter().map(|s| s.0).sum::<f64>();
+    let cpu_score = BASE_SCORE + (avg_gflops + 1000.0) as usize;
+    println!("Estimated CPU Score: {}", cpu_score);
     println!("Average GFLOPS/core: {:.2}", avg_gflops / max_thread as f64);
     println!("Total time: {}s", total_time as f32);
 

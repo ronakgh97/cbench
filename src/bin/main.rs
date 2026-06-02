@@ -51,9 +51,10 @@ fn main() -> anyhow::Result<()> {
 
             let main_handle = std::thread::Builder::new()
                 .name("bench-thread".to_string())
-                .stack_size(512 * 1024 * 1024)
+                .stack_size(1_500_000_000)
                 .spawn(move || {
-                    let runtime = tokio::runtime::Runtime::new().unwrap();
+                    let runtime =
+                        tokio::runtime::Runtime::new().expect("Failed to create async runtime");
                     runtime.block_on(async {
                         run_benchmark(runs, warmups, thread_num)
                             .await
