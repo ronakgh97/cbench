@@ -1,12 +1,14 @@
+use cbench::bencher::{MAX_RUN, MAX_WARMUP, POOL_CAPACITY};
 #[allow(unused)]
 use cbench::bencher::{SAMPLE_SIZE, run_benchmark};
 use clap::{Parser, Subcommand};
+use std::cmp::min;
 
 #[derive(Parser)]
 #[command(
     name = "cbench",
     version = "1.0.0-alpha",
-    about = "BLAS based cpu micro-benching tool"
+    about = "BLAS, Crypto based cpu micro-benching tool"
 )]
 struct CliArgs {
     #[command(subcommand)]
@@ -29,6 +31,9 @@ enum Command {
         max_threads: usize,
     },
 }
+pub const MAX_THREAD: usize = 24;
+const OVERHEAD: usize = 20 * 1024 * 1024;
+const MAX_BYTES: usize = 4; // f32, u8 etc
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
@@ -46,17 +51,21 @@ fn main() -> anyhow::Result<()> {
             let thread_num = if max_threads == 0 {
                 available_threads
             } else {
-                std::cmp::min(max_threads, available_threads)
+                min(max_threads, min(available_threads, MAX_THREAD))
             };
+
+            let runs = runs.clamp(1, MAX_RUN);
+            let warmups = warmups.clamp(1, MAX_WARMUP);
+            let stack_size = SAMPLE_SIZE * MAX_BYTES * POOL_CAPACITY + OVERHEAD;
 
             let main_handle = std::thread::Builder::new()
                 .name("bench-thread".to_string())
-                .stack_size(1_500_000_000)
+                .stack_size(stack_size) // oh, yeah
                 .spawn(move || {
                     let runtime =
                         tokio::runtime::Runtime::new().expect("Failed to create async runtime");
                     runtime.block_on(async {
-                        run_benchmark(runs, warmups, thread_num)
+                        run_benchmark(warmups, runs, thread_num)
                             .await
                             .expect("Benchmark failed");
                     });
