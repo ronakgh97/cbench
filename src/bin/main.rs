@@ -29,6 +29,14 @@ enum Command {
         /// Max threads to use in bench (default: 0, all available thread)
         #[arg(short, long, default_value = "0")]
         max_threads: usize,
+
+        /// Weight for BLAS GFLOPS in CPU score (default: 1.0)
+        #[arg(long, default_value = "1.0")]
+        blas_weight: f64,
+
+        /// Weight for Crypto GB/s in CPU score (default: 1.0)
+        #[arg(long, default_value = "1.0")]
+        crypto_weight: f64,
     },
 }
 pub const MAX_THREAD: usize = 24;
@@ -43,6 +51,8 @@ fn main() -> anyhow::Result<()> {
             runs,
             warmups,
             max_threads,
+            blas_weight,
+            crypto_weight,
         }) => {
             let available_threads = std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -65,7 +75,7 @@ fn main() -> anyhow::Result<()> {
                     let runtime =
                         tokio::runtime::Runtime::new().expect("Failed to create async runtime");
                     runtime.block_on(async {
-                        run_benchmark(warmups, runs, thread_num)
+                        run_benchmark(warmups, runs, thread_num, blas_weight, crypto_weight)
                             .await
                             .expect("Benchmark failed");
                     });

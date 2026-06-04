@@ -6,18 +6,30 @@ cbench run --runs 8 --warmups 3 --max-threads 18
 Warmup runs: 3 Benchmark runs: 8 Threads: 18
 
 Running BLAS bench...
-Run 1: Time = 1.293s GFLOPS = 279.03
-Run 2: Time = 1.275s GFLOPS = 282.85
-Run 3: Time = 1.287s GFLOPS = 280.33
-Run 4: Time = 1.254s GFLOPS = 287.75
-Run 5: Time = 1.233s GFLOPS = 292.44
-Run 6: Time = 1.258s GFLOPS = 286.76
-Run 7: Time = 1.295s GFLOPS = 278.54
-Run 8: Time = 1.261s GFLOPS = 286.09
--------------------------------------
-Estimated CPU Score: 2564
-Average GFLOPS/core: 15.79
-Total time: 10.155198s
+Run 1: Time = 0.406s GFLOPS = 761.14
+Run 2: Time = 0.403s GFLOPS = 766.86
+Run 3: Time = 0.397s GFLOPS = 778.96
+Run 4: Time = 0.402s GFLOPS = 768.82
+Run 5: Time = 0.397s GFLOPS = 779.28
+Run 6: Time = 0.398s GFLOPS = 776.11
+Run 7: Time = 0.391s GFLOPS = 790.79
+Run 8: Time = 0.405s GFLOPS = 763.08
+
+Running Crypto bench...
+Run 1: Time = 0.282s Cycles = 681473512
+Run 2: Time = 0.283s Cycles = 685411479
+Run 3: Time = 0.284s Cycles = 687970278
+Run 4: Time = 0.280s Cycles = 678521233
+Run 5: Time = 0.283s Cycles = 683580753
+Run 6: Time = 0.283s Cycles = 685580881
+Run 7: Time = 0.276s Cycles = 668620334
+Run 8: Time = 0.282s Cycles = 683344140
+---------------------------------------
+Estimated CPU Score: 2053
+Average SCORE/Core: 114.00
+BLAS: 773.13 GFLOPS
+Crypto: 0.13 GB/s
+Total time: 5.45s
 Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
 

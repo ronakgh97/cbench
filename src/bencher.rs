@@ -14,7 +14,13 @@ pub const MAX_RUN: usize = 18;
 pub const MAX_WARMUP: usize = 8;
 pub const POOL_CAPACITY: usize = MAX_RUN * 3; // each bench run need 3 blocks
 
-pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> anyhow::Result<()> {
+pub async fn run_benchmark(
+    warmups: usize,
+    runs: usize,
+    max_thread: usize,
+    blas_weight: f64,
+    crypto_weight: f64,
+) -> anyhow::Result<()> {
     let mut noise = Noise::init();
     println!(
         "Warmup runs: {} Benchmark runs: {} Threads: {}\n",
@@ -37,7 +43,6 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
         let mut block_b = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
         noise.fill_f32(&mut *block_a);
         noise.fill_f32(&mut *block_b);
-
         for _ in 0..warmups {
             let mut block_c = mem_pool.try_alloc_zeroed().context("Pool exhausted")?;
             gemm(
@@ -52,9 +57,11 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
                 0.0,
                 &mut *block_c,
                 MATRIX_SIZE,
-                false,
-                false,
+                true,
+                true,
             );
+            noise.fill_f32(&mut *block_a);
+            noise.fill_f32(&mut *block_b);
             black_box(&*block_c);
         }
     }
@@ -83,8 +90,8 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
                 0.0,
                 &mut *block_c,
                 MATRIX_SIZE,
-                false,
-                false,
+                true,
+                true,
             );
             black_box(&*block_c);
         } else {
@@ -108,8 +115,8 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
                             0.0,
                             block_c.get_mut(),
                             MATRIX_SIZE,
-                            false,
-                            false,
+                            true,
+                            true,
                         );
                         black_box(block_c.get());
                     });
@@ -212,7 +219,8 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
         };
         let cycles = (end - start) as f64;
         let elapsed = start_time.elapsed().as_secs_f64();
-        crypto_score[i] = (elapsed, cycles);
+        let data_processed = 3 * (2 * plan_text_len + SAMPLE_SIZE);
+        crypto_score[i] = (elapsed, data_processed as f64);
 
         println!("Run {}: Time = {:.3?}s Cycles = {}", i + 1, elapsed, cycles);
     }
@@ -221,12 +229,15 @@ pub async fn run_benchmark(warmups: usize, runs: usize, max_thread: usize) -> an
     let avg_gflops = blas_score[..runs].iter().map(|s| s.1).sum::<f64>() / (runs as f64);
     let total_blas_time = blas_score[..runs].iter().map(|s| s.0).sum::<f64>();
 
-    let avg_crypto_cycles = crypto_score[..runs].iter().map(|s| s.1).sum::<f64>() / (runs as f64);
+    let total_data_processed = crypto_score[..runs].iter().map(|s| s.1).sum::<f64>();
     let total_crypto_time = crypto_score[..runs].iter().map(|s| s.0).sum::<f64>();
 
-    let cpu_score = BASE_SCORE + (avg_gflops + avg_crypto_cycles) as usize;
+    let crypto_gbps = total_data_processed / total_crypto_time / 1e9;
+    let cpu_score = BASE_SCORE + (blas_weight * avg_gflops + crypto_weight * crypto_gbps) as usize;
     println!("Estimated CPU Score: {}", cpu_score);
     println!("Average SCORE/Core: {:.2}", (cpu_score / max_thread) as f32);
+    println!("BLAS: {:.2} GFLOPS", avg_gflops);
+    println!("Crypto: {:.2} GB/s", crypto_gbps);
     println!("Total time: {:.2}s", total_blas_time + total_crypto_time);
 
     println!("Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php");
@@ -242,13 +253,16 @@ fn crypto_stress(
 ) -> anyhow::Result<()> {
     encrypt_buf(plan_text, cipher_text, &key)?;
     decrypt_buf(cipher_text, plan_text, &key)?;
-    Sha3_512::digest(&hash_buf);
+    black_box(Sha3_512::digest(&*hash_buf));
     encrypt_buf(plan_text, cipher_text, &key)?;
     decrypt_buf(cipher_text, plan_text, &key)?;
-    Sha3_512::digest(&hash_buf);
+    black_box(Sha3_512::digest(&*hash_buf));
     encrypt_buf(plan_text, cipher_text, &key)?;
     decrypt_buf(cipher_text, plan_text, &key)?;
-    Sha3_512::digest(&hash_buf);
+    black_box(Sha3_512::digest(&*hash_buf));
+    encrypt_buf(plan_text, cipher_text, &key)?;
+    decrypt_buf(cipher_text, plan_text, &key)?;
+    black_box(Sha3_512::digest(&*hash_buf));
     Ok(())
 }
 
