@@ -1,35 +1,44 @@
+
 **cbench** is a microbenchmark tool for x86 CPU,
-performs a series of random maths computation (blas/crypto/pi) and scores in terms of GFLOPS & meaningful metrics
+performs a series of random maths computation (blas/crypto/pi) and scores in terms of GFLOPS & 'meaningful' metrics
 
 ```shell
-cbench run --runs 8 --warmups 3 --max-threads 18
-Warmup runs: 3 Benchmark runs: 8 Threads: 18
+cbench run --runs 12 --warmups 3 --max-threads 24
+Warmup runs: 3 Benchmark runs: 12 Threads: 24
 
 Running BLAS bench...
-Run 1: Time = 0.406s GFLOPS = 761.14
-Run 2: Time = 0.403s GFLOPS = 766.86
-Run 3: Time = 0.397s GFLOPS = 778.96
-Run 4: Time = 0.402s GFLOPS = 768.82
-Run 5: Time = 0.397s GFLOPS = 779.28
-Run 6: Time = 0.398s GFLOPS = 776.11
-Run 7: Time = 0.391s GFLOPS = 790.79
-Run 8: Time = 0.405s GFLOPS = 763.08
+Run 1: Time = 0.488s GFLOPS = 844.04
+Run 2: Time = 0.503s GFLOPS = 820.12
+Run 3: Time = 0.515s GFLOPS = 800.43
+Run 4: Time = 0.492s GFLOPS = 837.29
+Run 5: Time = 0.499s GFLOPS = 826.51
+Run 6: Time = 0.488s GFLOPS = 844.37
+Run 7: Time = 0.497s GFLOPS = 829.50
+Run 8: Time = 0.504s GFLOPS = 817.40
+Run 9: Time = 0.503s GFLOPS = 819.99
+Run 10: Time = 0.508s GFLOPS = 812.21
+Run 11: Time = 0.507s GFLOPS = 812.73
+Run 12: Time = 0.505s GFLOPS = 816.47
 
 Running Crypto bench...
-Run 1: Time = 0.282s Cycles = 681473512
-Run 2: Time = 0.283s Cycles = 685411479
-Run 3: Time = 0.284s Cycles = 687970278
-Run 4: Time = 0.280s Cycles = 678521233
-Run 5: Time = 0.283s Cycles = 683580753
-Run 6: Time = 0.283s Cycles = 685580881
-Run 7: Time = 0.276s Cycles = 668620334
-Run 8: Time = 0.282s Cycles = 683344140
+Run 1: Time = 0.331s Cycles = 801163363
+Run 2: Time = 0.342s Cycles = 828547666
+Run 3: Time = 0.342s Cycles = 828459561
+Run 4: Time = 0.338s Cycles = 817078197
+Run 5: Time = 0.340s Cycles = 821889399
+Run 6: Time = 0.331s Cycles = 799835009
+Run 7: Time = 0.326s Cycles = 789520575
+Run 8: Time = 0.328s Cycles = 794557962
+Run 9: Time = 0.323s Cycles = 782067216
+Run 10: Time = 0.328s Cycles = 794023725
+Run 11: Time = 0.347s Cycles = 839391206
+Run 12: Time = 0.344s Cycles = 831175626
 ---------------------------------------
-Estimated CPU Score: 2053
-Average SCORE/Core: 114.00
-BLAS: 773.13 GFLOPS
-Crypto: 0.13 GB/s
-Total time: 5.45s
+Estimated CPU Score: 2216
+Average SCORE/Core: 92.00
+BLAS: 823.42 GFLOPS
+Crypto: 112.65 MB/s
+Total time: 10.03s
 Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php
 ```
 

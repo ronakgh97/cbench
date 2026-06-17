@@ -49,12 +49,12 @@ pub async fn run_benchmark(
                 MATRIX_SIZE,
                 MATRIX_SIZE,
                 MATRIX_SIZE,
-                1.0,
+                3.0,
                 &*block_a,
                 MATRIX_SIZE,
                 &*block_b,
                 MATRIX_SIZE,
-                0.0,
+                5.0,
                 &mut *block_c,
                 MATRIX_SIZE,
                 true,
@@ -82,12 +82,12 @@ pub async fn run_benchmark(
                 MATRIX_SIZE,
                 MATRIX_SIZE,
                 MATRIX_SIZE,
-                1.0,
+                5.0,
                 &*block_a,
                 MATRIX_SIZE,
                 &*block_b,
                 MATRIX_SIZE,
-                0.0,
+                7.0,
                 &mut *block_c,
                 MATRIX_SIZE,
                 true,
@@ -107,12 +107,12 @@ pub async fn run_benchmark(
                             MATRIX_SIZE,
                             MATRIX_SIZE,
                             MATRIX_SIZE,
-                            1.0,
+                            5.0,
                             block_a,
                             MATRIX_SIZE,
                             block_b,
                             MATRIX_SIZE,
-                            0.0,
+                            7.0,
                             block_c.get_mut(),
                             MATRIX_SIZE,
                             true,
@@ -232,12 +232,12 @@ pub async fn run_benchmark(
     let total_data_processed = crypto_score[..runs].iter().map(|s| s.1).sum::<f64>();
     let total_crypto_time = crypto_score[..runs].iter().map(|s| s.0).sum::<f64>();
 
-    let crypto_gbps = total_data_processed / total_crypto_time / 1e9;
-    let cpu_score = BASE_SCORE + (blas_weight * avg_gflops + crypto_weight * crypto_gbps) as usize;
+    let crypto_mbps = total_data_processed / total_crypto_time / 1e6;
+    let cpu_score = BASE_SCORE + (blas_weight * avg_gflops + crypto_weight * crypto_mbps) as usize;
     println!("Estimated CPU Score: {}", cpu_score);
     println!("Average SCORE/Core: {:.2}", (cpu_score / max_thread) as f32);
     println!("BLAS: {:.2} GFLOPS", avg_gflops);
-    println!("Crypto: {:.2} GB/s", crypto_gbps);
+    println!("Crypto: {:.2} MB/s", crypto_mbps);
     println!("Total time: {:.2}s", total_blas_time + total_crypto_time);
 
     println!("Find your CPU here: https://boinc.bakerlab.org/rosetta/cpu_list.php");
