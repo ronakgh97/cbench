@@ -1,5 +1,6 @@
 use aes_gcm::{AeadInOut, Aes256Gcm, KeyInit, Nonce, Tag};
 use anyhow::Result;
+use bytemuck::Zeroable;
 use core::array::from_fn;
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -33,35 +34,6 @@ unsafe impl<T: Send, const N: usize> Sync for StaticMemPool<T, N> {}
 /// is required to ensure the value can be safely sent across threads if the block is moved.
 unsafe impl<T: Send, const N: usize> Send for Block<'_, T, N> {}
 unsafe impl<T: Sync, const N: usize> Sync for Block<'_, T, N> {}
-
-#[allow(clippy::missing_safety_doc)]
-/// A type whose all-zero bit pattern is a valid value.
-/// Implementing this trait asserts that: `mem::zeroed::<T>()` would produce a valid instance of `T`.
-/// This must remain true for all possible bitwise-zero values.
-///
-/// Examples:
-/// - `u32`, `i64`, `f32` are valid
-/// - `[T; N]` is valid when `T: Zeroable`
-///
-/// Non-examples:
-/// - `String`
-/// - `Vec<T>`
-/// - `&T`
-/// - `NonZeroU32`
-pub unsafe trait Zeroable: Copy {}
-unsafe impl Zeroable for u8 {}
-unsafe impl Zeroable for u16 {}
-unsafe impl Zeroable for u32 {}
-unsafe impl Zeroable for u64 {}
-unsafe impl Zeroable for usize {}
-unsafe impl Zeroable for i8 {}
-unsafe impl Zeroable for i16 {}
-unsafe impl Zeroable for i32 {}
-unsafe impl Zeroable for i64 {}
-unsafe impl Zeroable for isize {}
-unsafe impl Zeroable for f32 {}
-unsafe impl Zeroable for f64 {}
-unsafe impl<T: Zeroable, const N: usize> Zeroable for [T; N] {}
 
 /// Exclusive ownership of a pool slot.
 ///
